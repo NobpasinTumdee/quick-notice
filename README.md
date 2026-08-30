@@ -5,7 +5,10 @@ sit up straight, rest your eyes and move — and levels up as you do. Glassmorph
 five unlockable themes, a wardrobe of SVG wearables, and soft notifications that never
 yank you out of flow.
 
-![350×450 popup](public/icons/icon128.png)
+Lives in the Chrome **side panel** — open beside your tabs, not a popup that vanishes
+when you click away.
+
+![Momo](public/icons/icon128.png)
 
 ## Features
 
@@ -42,7 +45,8 @@ npm run build      # generates icons, typechecks, builds to dist/
 ```
 
 Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-select the `dist/` folder.
+select the `dist/` folder. **Click the toolbar icon to open the side panel** (there is no
+popup — the worker sets `openPanelOnActionClick`).
 
 ### Development
 
@@ -51,10 +55,11 @@ npm run dev
 npm test           # economy + storage-schema tests, plain node --test
 ```
 
-`@crxjs/vite-plugin` writes a live `dist/` with HMR — load it unpacked once and the popup
+`@crxjs/vite-plugin` writes a live `dist/` with HMR — load it unpacked once and the panel
 hot-reloads as you edit. Opening `http://localhost:5173/index.html` in a normal tab also
 works: `src/lib/bridge.ts` falls back to mock state when no extension runtime is present,
-so you can iterate on the UI without reloading the extension.
+so you can iterate on the UI without reloading the extension. Narrow the browser window to
+~320–420px to preview panel widths.
 
 ```bash
 npm run icons      # redraw public/icons/*.png
@@ -100,11 +105,35 @@ scripts/generate-sounds.mjs  synthesises the sound pack into sounds.generated.ts
 tests/economy.test.ts        13 tests over the economy and the storage schema
 ```
 
-**The service worker owns all timing.** Popups are destroyed the moment they close, so the
-UI only ever reads state and sends intents (`GET_STATE`, `UPDATE_SETTINGS`,
-`COMPLETE_REMINDER`, `SNOOZE_REMINDER`, `PREVIEW_NOTIFICATION`). Alarms are reconciled
-against settings on install, on startup, on every settings change, and on cold worker boot —
-so an alarm set can never drift from what the user asked for.
+**The service worker owns all timing.** The UI only ever reads state and sends intents
+(`GET_STATE`, `UPDATE_SETTINGS`, `COMPLETE_REMINDER`, `SNOOZE_REMINDER`,
+`PREVIEW_NOTIFICATION`, `EQUIP_ITEM`, `BUY_ITEM`, `SET_SOUND`). Alarms are reconciled against
+settings on install, on startup, on every settings change, and on cold worker boot — so an
+alarm set can never drift from what the user asked for.
+
+## The side panel
+
+`side_panel.default_path` points at the same `index.html` the popup used; the `action` has no
+`default_popup`, and the worker calls `sidePanel.setPanelBehavior({ openPanelOnActionClick:
+true })` so the toolbar icon opens the panel. That behaviour is profile state rather than a
+manifest key, so it is re-applied on install, on startup, **and on cold worker boot** — an
+MV3 worker can be respawned without either event firing.
+
+The move is not just a resize. A popup was destroyed on every close, so mounting was enough
+to guarantee fresh state; a panel can sit open for hours beside the tabs. `useCompanion` now
+keeps itself current from four directions:
+
+| Trigger | Catches |
+|---|---|
+| `storage.onChanged` (sync `kw:p`) | EXP, coins and gear — including a **Done ✓** tapped on a notification |
+| `storage.onChanged` (sync `kw:settings`) | edits from another window, ignoring the echo of its own debounced write |
+| `storage.onChanged` (local `kw:stats`) | a habit completing or a nudge firing, which also moves the schedule |
+| `visibilitychange` + a 45s poll | anything storage cannot announce, such as a snooze that only shifted an alarm |
+
+Layout-wise the panel is the viewport: the document is fluid with a 300px floor, the column
+centres past 520px so a widened panel does not stretch cards, Momo stays **pinned at the top**
+while the habit list scrolls under her with a frosted fade, habits became full-width rows, and
+the shop grows to three columns past 430px.
 
 **Marking a habit done restarts its cycle**, so an early sip means the next nudge is a full
 interval away rather than seconds later.
@@ -159,6 +188,7 @@ build (or a corrupted one) can never equip art this build does not have.
 | `alarms` | the reminder timers — MV3 workers cannot hold `setInterval` |
 | `notifications` | the nudges themselves |
 | `offscreen` | playing the selected sound — MV3 workers have no `Audio`/`AudioContext` |
+| `sidePanel` | the UI itself |
 
 No host permissions, no content scripts, no network calls: the extension never touches the
 pages you browse.
@@ -170,6 +200,10 @@ pages you browse.
 - `chrome.action.openPopup()` (used when a notification body is clicked) needs Chrome 127+;
   it fails silently on older builds and the toolbar icon still works.
 - `prefers-reduced-motion` disables the animations, including Momo's breathing.
+- The side panel needs **Chrome 114+**.
+- `sidePanel.open()` (used when a notification body is clicked) requires a user gesture and a
+  target window; it is best-effort and fails quietly on older builds, where the toolbar icon
+  still opens the panel.
 - Notification sounds need an **offscreen document** (`chrome.offscreen`, Chrome 109+); the
   worker creates one on first sound and reuses it. Chrome's own notification chime stays off
   (`silent: true`) so the chosen pack is the only thing you hear.

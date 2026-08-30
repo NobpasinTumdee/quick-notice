@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useMemo, useState } from 'react'
 import {
   equippedId,
+  ITEM_MAP,
   itemStatus,
   itemsForSlot,
   RARITY_META,
@@ -66,13 +67,37 @@ export function WardrobeView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-4 pb-2">
-      <GlassCard tone="raised" className="flex items-center gap-3 px-3 py-2.5">
-        <div className="-my-2 shrink-0">
-          <Mascot mood="happy" palette={theme.mascot} equipped={player.eq} size={62} />
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 px-3.5 pb-2">
+      <GlassCard tone="raised" className="px-3 py-2.5">
+        <div className="flex items-center gap-3">
+          <div className="-my-2 shrink-0">
+            <Mascot mood="happy" palette={theme.mascot} equipped={player.eq} size={72} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <LevelBar player={player} showBadge={false} showCoins={false} />
+          </div>
         </div>
-        <div className="min-w-0 flex-1">
-          <LevelBar player={player} showBadge={false} showCoins={false} />
+
+        {/* What Momo is wearing right now, slot by slot. */}
+        <div className="mt-2 flex gap-1.5 border-t border-ink/10 pt-2">
+          {SLOTS.map((slot) => {
+            const worn = ITEM_MAP.get(equippedId(player, slot))
+            return (
+              <button
+                key={slot}
+                type="button"
+                onClick={() => setTab(slot)}
+                className="min-w-0 flex-1 rounded-xl px-1.5 py-1 text-left transition-colors hover:bg-ink/5 focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25"
+              >
+                <span className="block text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-inkFaint">
+                  {SLOT_META[slot].label}
+                </span>
+                <span className="block truncate text-[10.5px] font-bold text-ink">
+                  {worn ? worn.name : '—'}
+                </span>
+              </button>
+            )
+          })}
         </div>
       </GlassCard>
 
@@ -119,7 +144,7 @@ export function WardrobeView({
                 onLocked={(level) => flash(`Unlocks at level ${level}`)}
               />
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2 min-[430px]:grid-cols-3">
                 {items.map((item, i) => (
                   <ItemCard
                     key={item.id}

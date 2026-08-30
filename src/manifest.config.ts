@@ -9,8 +9,10 @@ export default defineManifest({
   description:
     'A cute mascot that gently reminds you to hydrate, stretch, fix your posture and rest your eyes.',
   action: {
-    default_popup: 'index.html',
-    default_title: 'Kawaii Wellness Companion',
+    // No default_popup: clicking the icon opens the side panel instead, wired up
+    // by `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` in the
+    // service worker.
+    default_title: 'Open Momo · Kawaii Wellness',
     default_icon: {
       '16': 'icons/icon16.png',
       '32': 'icons/icon32.png',
@@ -24,11 +26,14 @@ export default defineManifest({
     '48': 'icons/icon48.png',
     '128': 'icons/icon128.png',
   },
+  side_panel: {
+    default_path: 'index.html',
+  },
   background: {
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
   },
-  permissions: ['storage', 'alarms', 'notifications', 'offscreen'],
+  permissions: ['storage', 'alarms', 'notifications', 'offscreen', 'sidePanel'],
   web_accessible_resources: [
     {
       resources: ['icons/*.png'],

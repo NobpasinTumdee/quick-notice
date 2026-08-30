@@ -18,7 +18,7 @@ interface TabBarProps {
 export function TabBar({ view, onChange, shopHint = false }: TabBarProps) {
   return (
     <nav
-      className="relative mx-3 mb-3 flex gap-1 rounded-3xl border border-edge/40 p-1 shadow-glass backdrop-blur-xl"
+      className="relative mx-3.5 mb-3 flex shrink-0 gap-1 rounded-3xl border border-edge/40 p-1 shadow-glass backdrop-blur-xl"
       style={{ background: 'rgb(var(--kw-surface) / var(--kw-glass))' }}
     >
       {TABS.map((tab) => {

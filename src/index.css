@@ -30,8 +30,10 @@
   }
 
   body {
-    width: 350px;
-    height: 450px;
+    /* Side panel: the panel *is* the viewport. It is user-resizable, roughly
+       320px at its narrowest, and as tall as the browser window. */
+    width: 100%;
+    min-width: 300px;
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;

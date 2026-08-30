@@ -32,7 +32,7 @@ export function SettingsView({
   const [lockNote, setLockNote] = useState<string | null>(null)
 
   return (
-    <div className="kw-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 pb-4">
+    <div className="kw-scroll flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3.5 pb-4">
       <Section title="Reminders" hint="tap the emoji to preview">
         <div className="flex flex-col gap-2">
           {REMINDERS.map((meta, i) => {

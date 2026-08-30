@@ -13,7 +13,12 @@ export function Header({ streak, player, subtitle }: HeaderProps) {
   const progress = levelProgress(player)
 
   return (
-    <header className="flex items-center gap-2 px-4 pb-1.5 pt-3">
+    <header
+      className="flex shrink-0 items-center gap-2 px-3.5 pb-1.5 pt-3 backdrop-blur-sm"
+      // Matches the sticky mascot band below it, so the two read as one surface
+      // instead of meeting at a visible seam.
+      style={{ background: 'rgb(var(--kw-bg-start) / 0.92)' }}
+    >
       <LevelRing level={player.l} pct={progress.pct} />
 
       <div className="flex min-w-0 flex-col">

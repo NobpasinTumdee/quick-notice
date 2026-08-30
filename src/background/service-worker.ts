@@ -205,9 +205,41 @@ async function snoozeReminder(id: ReminderId, minutes: number): Promise<void> {
   await setPending((await getPending()).filter((p) => p !== id))
 }
 
+/* -------------------------------------------------------------- side panel */
+
+/**
+ * Makes a toolbar-icon click open the side panel. This is a per-profile setting
+ * rather than a manifest key, so it is (re)applied on install, on startup, and
+ * on cold worker boot — a worker can be respawned without either event firing.
+ */
+async function enablePanelOnActionClick(): Promise<void> {
+  try {
+    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+  } catch (error) {
+    console.error('[kawaii] could not set side panel behavior', error)
+  }
+}
+
+/**
+ * Opens the panel from a notification click.
+ * `sidePanel.open()` requires a user gesture and a window to attach to; a
+ * notification click qualifies on current Chrome, but older builds throw, so
+ * this stays best-effort — the toolbar icon always works.
+ */
+async function openPanel(): Promise<void> {
+  try {
+    const window = await chrome.windows.getLastFocused()
+    if (window.id === undefined || window.id === chrome.windows.WINDOW_ID_NONE) return
+    await chrome.sidePanel.open({ windowId: window.id })
+  } catch (error) {
+    console.debug('[kawaii] side panel open declined', error)
+  }
+}
+
 /* ------------------------------------------------------------ event wiring */
 
 chrome.runtime.onInstalled.addListener(async (details) => {
+  await enablePanelOnActionClick()
   const settings = await loadSettings()
   await saveSettings(settings)
   await savePlayer(await loadPlayer())
@@ -227,6 +259,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 })
 
 chrome.runtime.onStartup.addListener(async () => {
+  await enablePanelOnActionClick()
   await syncAlarms(await loadSettings())
   await setPending([])
 })
@@ -258,12 +291,7 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
   await chrome.notifications.clear(notificationId)
-  // openPopup lands in Chrome 127+; harmless to attempt on older builds.
-  try {
-    await chrome.action.openPopup()
-  } catch {
-    /* the toolbar icon still works */
-  }
+  await openPanel()
 })
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -357,8 +385,10 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
   return true // keep the message channel open for the async work above
 })
 
-// A cold worker with nothing stored yet still deserves working alarms.
+// A cold worker with nothing stored yet still deserves working alarms — and a
+// respawned worker still owes the profile its side-panel behaviour.
 void (async () => {
+  await enablePanelOnActionClick()
   const bag = await chrome.storage.sync.get(SETTINGS_KEY)
   if (!bag[SETTINGS_KEY]) await saveSettings(defaultSettings())
   await syncAlarms(await loadSettings())

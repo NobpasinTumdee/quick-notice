@@ -8,7 +8,7 @@ import {
   PLAYER_KEY,
   type PurchaseError,
 } from '../lib/gamification'
-import { defaultSettings, defaultStats } from '../lib/storage'
+import { defaultSettings, defaultStats, SETTINGS_KEY, STATS_KEY } from '../lib/storage'
 import { applyTheme } from '../lib/themes'
 import type {
   CompanionState,
@@ -63,46 +63,83 @@ export function useCompanion(): UseCompanion {
   const [now, setNow] = useState(() => Date.now())
   const [celebration, setCelebration] = useState<Celebration | null>(null)
   const saveTimer = useRef<number | null>(null)
+  /** Serialised settings we wrote ourselves, so our own storage echo is ignored. */
+  const ownWrite = useRef<string | null>(null)
+
+  /**
+   * Pulls the whole world from the worker. The popup only ever needed this on
+   * mount; the side panel stays open for hours, so it also runs whenever
+   * storage changes, whenever the panel becomes visible, and on a slow timer.
+   */
+  const refresh = useCallback(async () => {
+    const state = await send<CompanionState>({ type: 'GET_STATE' })
+    if (!state) return false
+    setSettings(state.settings)
+    setStats(state.stats)
+    setPlayer(state.player)
+    setSchedule(state.schedule)
+    applyTheme(state.settings.theme)
+    return true
+  }, [])
 
   useEffect(() => {
     let alive = true
     void (async () => {
-      const state = await send<CompanionState>({ type: 'GET_STATE' })
-      if (!alive || !state) {
-        setReady(true)
-        return
-      }
-      setSettings(state.settings)
-      setStats(state.stats)
-      setPlayer(state.player)
-      setSchedule(state.schedule)
-      applyTheme(state.settings.theme)
-      setReady(true)
+      await refresh()
+      if (alive) setReady(true)
     })()
     return () => {
       alive = false
     }
-  }, [])
+  }, [refresh])
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
   }, [])
 
-  // The save can change while the popup is open — a "Done ✓" tapped on a
-  // notification pays out in the worker. Mirror it rather than going stale.
+  // A "Done ✓" tapped on a notification, or a nudge firing, changes state in the
+  // worker while the panel sits open. Mirror it instead of going stale.
   useEffect(() => {
     if (typeof chrome === 'undefined' || !chrome.storage?.onChanged) return
+
     const listener = (
       changes: Record<string, chrome.storage.StorageChange>,
       area: string,
     ) => {
-      if (area !== 'sync' || !changes[PLAYER_KEY]) return
-      setPlayer(mergePlayer(changes[PLAYER_KEY].newValue))
+      if (area === 'sync' && changes[PLAYER_KEY]) {
+        setPlayer(mergePlayer(changes[PLAYER_KEY].newValue))
+      }
+      if (area === 'sync' && changes[SETTINGS_KEY]) {
+        const incoming = JSON.stringify(changes[SETTINGS_KEY].newValue)
+        // Skip the echo of our own debounced write, which would otherwise stomp
+        // a slider the user is still dragging.
+        if (incoming !== ownWrite.current) void refresh()
+      }
+      // Stats live in local storage and move whenever a habit completes or a
+      // nudge fires — both of which also change the schedule.
+      if (area === 'local' && changes[STATS_KEY]) void refresh()
     }
+
     chrome.storage.onChanged.addListener(listener)
     return () => chrome.storage.onChanged.removeListener(listener)
-  }, [])
+  }, [refresh])
+
+  // Cheap safety nets for anything storage cannot announce (a snooze elsewhere,
+  // an alarm that only moved the schedule, the panel being hidden for a while).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh()
+    }, 45_000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(poll)
+    }
+  }, [refresh])
 
   /** Optimistic: paint immediately, persist on a short debounce. */
   const commit = useCallback((next: Settings) => {
@@ -110,6 +147,7 @@ export function useCompanion(): UseCompanion {
     applyTheme(next.theme)
     if (saveTimer.current) window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(() => {
+      ownWrite.current = JSON.stringify(next)
       void send<{ schedule: Schedule }>({ type: 'UPDATE_SETTINGS', settings: next }).then((res) => {
         if (res?.schedule) setSchedule(res.schedule)
       })
@@ -122,6 +160,7 @@ export function useCompanion(): UseCompanion {
       if (!saveTimer.current) return
       window.clearTimeout(saveTimer.current)
       saveTimer.current = null
+      ownWrite.current = JSON.stringify(settings)
       void send({ type: 'UPDATE_SETTINGS', settings })
     }
     window.addEventListener('pagehide', flush)
