@@ -18,8 +18,13 @@ export interface ReminderSetting {
   intervalMinutes: number
 }
 
+/** Where the UI opens when the toolbar icon is clicked. */
+export type ViewMode = 'popup' | 'sidepanel'
+
 export interface Settings {
   theme: ThemeId
+  /** Surface the extension opens in; applied by the worker, not the manifest. */
+  viewMode: ViewMode
   notificationsEnabled: boolean
   /** Skips nudges outside the active window (24h clock, local time). */
   quietHours: { enabled: boolean; from: number; to: number }

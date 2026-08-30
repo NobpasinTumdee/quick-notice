@@ -36,6 +36,7 @@ import type {
   ReminderId,
   Schedule,
   Settings,
+  ViewMode,
 } from '../lib/types'
 
 const ALARM_PREFIX = 'kw:'
@@ -205,42 +206,65 @@ async function snoozeReminder(id: ReminderId, minutes: number): Promise<void> {
   await setPending((await getPending()).filter((p) => p !== id))
 }
 
-/* -------------------------------------------------------------- side panel */
+/* ------------------------------------------------------- surface (popup/panel) */
 
 /**
- * Makes a toolbar-icon click open the side panel. This is a per-profile setting
- * rather than a manifest key, so it is (re)applied on install, on startup, and
- * on cold worker boot — a worker can be respawned without either event firing.
+ * The popup and the side panel load the same page. It is handed a query flag so
+ * the document can size itself correctly: a side panel fills its viewport, while
+ * a popup's viewport is derived from the content and needs fixed dimensions.
  */
-async function enablePanelOnActionClick(): Promise<void> {
+export const POPUP_PATH = 'index.html?surface=popup'
+
+/**
+ * Points the toolbar icon at the surface the user picked.
+ *
+ * MV3 gives the popup priority: if an action popup is set, the icon opens it and
+ * `openPanelOnActionClick` never gets a look in. So the two settings are always
+ * written as a pair — clearing one is what lets the other work.
+ *
+ * This is profile state, not a manifest key, and `action.setPopup` does not
+ * survive a browser restart, so it is re-applied on install, on startup, on cold
+ * worker boot, and whenever the setting changes.
+ */
+async function updateViewMode(mode: ViewMode): Promise<void> {
   try {
-    await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    if (mode === 'sidepanel') {
+      await chrome.action.setPopup({ popup: '' })
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true })
+    } else {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false })
+      await chrome.action.setPopup({ popup: POPUP_PATH })
+    }
   } catch (error) {
-    console.error('[kawaii] could not set side panel behavior', error)
+    console.error('[kawaii] could not apply view mode', mode, error)
   }
 }
 
 /**
- * Opens the panel from a notification click.
- * `sidePanel.open()` requires a user gesture and a window to attach to; a
- * notification click qualifies on current Chrome, but older builds throw, so
- * this stays best-effort — the toolbar icon always works.
+ * Opens the UI from a notification click, in whichever surface is configured.
+ * Both APIs need a user gesture and can refuse; the toolbar icon is always the
+ * reliable path, so this stays best-effort.
  */
-async function openPanel(): Promise<void> {
+async function openCompanion(mode: ViewMode): Promise<void> {
   try {
+    if (mode === 'popup') {
+      // openPopup lands in Chrome 127+.
+      await chrome.action.openPopup()
+      return
+    }
     const window = await chrome.windows.getLastFocused()
     if (window.id === undefined || window.id === chrome.windows.WINDOW_ID_NONE) return
     await chrome.sidePanel.open({ windowId: window.id })
   } catch (error) {
-    console.debug('[kawaii] side panel open declined', error)
+    console.debug('[kawaii] open declined', error)
   }
 }
 
 /* ------------------------------------------------------------ event wiring */
 
 chrome.runtime.onInstalled.addListener(async (details) => {
-  await enablePanelOnActionClick()
   const settings = await loadSettings()
+  await updateViewMode(settings.viewMode)
   await saveSettings(settings)
   await savePlayer(await loadPlayer())
   await syncAlarms(settings)
@@ -259,8 +283,10 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 })
 
 chrome.runtime.onStartup.addListener(async () => {
-  await enablePanelOnActionClick()
-  await syncAlarms(await loadSettings())
+  const settings = await loadSettings()
+  // action.setPopup is not persisted across restarts, so this must run every boot.
+  await updateViewMode(settings.viewMode)
+  await syncAlarms(settings)
   await setPending([])
 })
 
@@ -291,12 +317,18 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId, buttonIn
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
   await chrome.notifications.clear(notificationId)
-  await openPanel()
+  await openCompanion((await loadSettings()).viewMode)
 })
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'sync' || !changes[SETTINGS_KEY]) return
-  await syncAlarms(await loadSettings())
+  const change = changes[SETTINGS_KEY]
+  const settings = await loadSettings()
+
+  const before = (change.oldValue as Settings | undefined)?.viewMode
+  if (before !== settings.viewMode) await updateViewMode(settings.viewMode)
+
+  await syncAlarms(settings)
 })
 
 chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendResponse) => {
@@ -386,10 +418,11 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
 })
 
 // A cold worker with nothing stored yet still deserves working alarms — and a
-// respawned worker still owes the profile its side-panel behaviour.
+// respawned worker still owes the profile its action behaviour.
 void (async () => {
-  await enablePanelOnActionClick()
   const bag = await chrome.storage.sync.get(SETTINGS_KEY)
   if (!bag[SETTINGS_KEY]) await saveSettings(defaultSettings())
-  await syncAlarms(await loadSettings())
+  const settings = await loadSettings()
+  await updateViewMode(settings.viewMode)
+  await syncAlarms(settings)
 })()

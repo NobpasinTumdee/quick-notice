@@ -5,8 +5,8 @@ sit up straight, rest your eyes and move — and levels up as you do. Glassmorph
 five unlockable themes, a wardrobe of SVG wearables, and soft notifications that never
 yank you out of flow.
 
-Lives in the Chrome **side panel** — open beside your tabs, not a popup that vanishes
-when you click away.
+Opens in the Chrome **side panel** or as a classic **popup** — your choice, switchable in
+settings at any time.
 
 ![Momo](public/icons/icon128.png)
 
@@ -36,6 +36,8 @@ when you click away.
 - **Soft notifications** — silent, low priority, with **Done ✓** and **Snooze 5 min** buttons,
   illustrated with per-habit mascot art.
 - **Streaks** — a daily streak and per-habit counters, kept in `chrome.storage`.
+- **Your choice of surface** — side panel (stays open beside your tabs) or popup, picked in
+  Settings → *Open as*. See [Surfaces](#surfaces-side-panel-or-popup).
 
 ## Quick start
 
@@ -45,8 +47,8 @@ npm run build      # generates icons, typechecks, builds to dist/
 ```
 
 Then in Chrome: `chrome://extensions` → enable **Developer mode** → **Load unpacked** →
-select the `dist/` folder. **Click the toolbar icon to open the side panel** (there is no
-popup — the worker sets `openPanelOnActionClick`).
+select the `dist/` folder. **Click the toolbar icon** to open Momo — in the side panel by
+default, or as a popup once you switch modes in Settings.
 
 ### Development
 
@@ -84,6 +86,7 @@ src/
     LevelBar.tsx            level badge + EXP bar + coin purse
     SettingsView.tsx        per-reminder toggles + sliders, theme picker, quiet hours
     ThemePicker.tsx         five themes as gradient chips, locked ones greyed
+    ViewModePicker.tsx      side panel vs popup, with a diagram of each
     TabBar.tsx              Momo / Shop / Setup, with a spring-shared pill
     Toggle.tsx              spring pill switch
     IntervalSlider.tsx      range input snapped to curated intervals
@@ -95,6 +98,7 @@ src/
     gamification.ts         the save format, level curve, item catalogue, shop rules
     audio.ts                sound selection + offscreen-document plumbing
     sounds.generated.ts     GENERATED base64 WAVs (npm run sounds)
+    surface.ts              reads the ?surface flag: popup vs side panel
     themes.ts               palettes + `applyTheme()` (writes CSS custom properties)
     reminders.ts            the habit catalogue: copy, tints, intervals, praise lines
     storage.ts              defaults, merges, streak maths, quiet-hours check
@@ -103,6 +107,7 @@ src/
 scripts/generate-icons.mjs   draws every PNG from code (no binary assets in the repo)
 scripts/generate-sounds.mjs  synthesises the sound pack into sounds.generated.ts
 tests/economy.test.ts        13 tests over the economy and the storage schema
+tests/settings.test.ts       6 tests over settings migration and view-mode validation
 ```
 
 **The service worker owns all timing.** The UI only ever reads state and sends intents
@@ -111,13 +116,37 @@ tests/economy.test.ts        13 tests over the economy and the storage schema
 settings on install, on startup, on every settings change, and on cold worker boot — so an
 alarm set can never drift from what the user asked for.
 
-## The side panel
+## Surfaces: side panel or popup
 
-`side_panel.default_path` points at the same `index.html` the popup used; the `action` has no
-`default_popup`, and the worker calls `sidePanel.setPanelBehavior({ openPanelOnActionClick:
-true })` so the toolbar icon opens the panel. That behaviour is profile state rather than a
-manifest key, so it is re-applied on install, on startup, **and on cold worker boot** — an
-MV3 worker can be respawned without either event firing.
+Both surfaces load the same `index.html`. Which one the toolbar icon opens is a setting
+(`viewMode`, default `sidepanel`), applied by the worker rather than fixed in the manifest.
+
+**MV3 gives the popup priority**: if an action popup is set, the icon opens it and
+`openPanelOnActionClick` never gets a look in. So `updateViewMode()` always writes both
+halves as a pair — clearing one is what lets the other work:
+
+```ts
+// side panel                        // popup
+setPopup({ popup: '' })              setPanelBehavior({ openPanelOnActionClick: false })
+setPanelBehavior({ ...: true })      setPopup({ popup: POPUP_PATH })
+```
+
+That state belongs to the profile, not the manifest, and **`action.setPopup` does not survive
+a browser restart** — so `updateViewMode()` runs on install, on startup, on cold worker boot
+(an MV3 worker can be respawned without either event firing), and from the
+`storage.onChanged` listener whenever `viewMode` actually changes.
+
+The popup path carries a flag — `index.html?surface=popup` — because the two surfaces are
+otherwise indistinguishable from inside the page, and they need different sizing. A side
+panel fills a real viewport, so `height: 100%` works. A popup's viewport is derived from its
+*content*, so percentage heights have nothing to resolve against and collapse the window;
+`main.tsx` stamps `data-surface` before first paint and the popup gets fixed dimensions,
+within the 800×600 ceiling Chrome enforces:
+
+| Surface | Sizing |
+|---|---|
+| Side panel | `width: 100%`, `min-width: 300px`, full viewport height |
+| Popup | `380 × 600px`, `max-height: 600px` |
 
 The move is not just a resize. A popup was destroyed on every close, so mounting was enough
 to guarantee fresh state; a panel can sit open for hours beside the tabs. `useCompanion` now
@@ -200,7 +229,10 @@ pages you browse.
 - `chrome.action.openPopup()` (used when a notification body is clicked) needs Chrome 127+;
   it fails silently on older builds and the toolbar icon still works.
 - `prefers-reduced-motion` disables the animations, including Momo's breathing.
-- The side panel needs **Chrome 114+**.
+- The side panel needs **Chrome 114+**. Switching modes takes effect on the next icon click;
+  an already-open panel or popup stays as it is.
+- The side panel entry stays registered in popup mode, so it can still be opened from Chrome's
+  own side-panel menu — the setting governs what the *icon* does.
 - `sidePanel.open()` (used when a notification body is clicked) requires a user gesture and a
   target window; it is best-effort and fails quietly on older builds, where the toolbar icon
   still opens the panel.

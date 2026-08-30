@@ -7,6 +7,7 @@ import { GlassCard } from './GlassCard'
 import { IntervalSlider } from './IntervalSlider'
 import { ThemePicker } from './ThemePicker'
 import { Toggle } from './Toggle'
+import { ViewModePicker } from './ViewModePicker'
 
 interface SettingsViewProps {
   settings: Settings
@@ -107,6 +108,13 @@ export function SettingsView({
             )
           })}
         </div>
+      </Section>
+
+      <Section title="Open as" hint="takes effect on the next icon click">
+        <ViewModePicker
+          value={settings.viewMode}
+          onChange={(viewMode) => onPatch({ viewMode })}
+        />
       </Section>
 
       <Section title="Theme" hint={lockNote ?? 'earn themes by levelling up'}>

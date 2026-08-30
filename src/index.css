@@ -30,8 +30,8 @@
   }
 
   body {
-    /* Side panel: the panel *is* the viewport. It is user-resizable, roughly
-       320px at its narrowest, and as tall as the browser window. */
+    /* Side panel (default): the panel *is* the viewport. It is user-resizable,
+       roughly 320px at its narrowest, and as tall as the browser window. */
     width: 100%;
     min-width: 300px;
     overflow: hidden;
@@ -44,6 +44,22 @@
     transition:
       background 400ms ease,
       color 300ms ease;
+  }
+
+  /*
+   * Popup mode. A popup's viewport is derived from its content rather than from
+   * a window, so percentage heights have nothing to resolve against and collapse
+   * the window. Fixed dimensions are required, capped at the 800×600 ceiling
+   * Chrome enforces on popups. `main.tsx` stamps data-surface from the ?surface
+   * flag the worker puts on the popup path.
+   */
+  :root[data-surface='popup'] {
+    height: auto;
+  }
+  :root[data-surface='popup'] body {
+    width: 380px;
+    height: 600px;
+    max-height: 600px;
   }
 
   button {

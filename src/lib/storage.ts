@@ -1,5 +1,5 @@
 import { REMINDERS } from './reminders'
-import type { ReminderId, Settings, Stats } from './types'
+import type { ReminderId, Settings, Stats, ViewMode } from './types'
 
 export const SETTINGS_KEY = 'kw:settings'
 export const STATS_KEY = 'kw:stats'
@@ -10,9 +10,12 @@ export function todayKey(d = new Date()): string {
   ).padStart(2, '0')}`
 }
 
+export const VIEW_MODES: readonly ViewMode[] = ['sidepanel', 'popup'] as const
+
 export function defaultSettings(): Settings {
   return {
     theme: 'matcha',
+    viewMode: 'sidepanel',
     notificationsEnabled: true,
     quietHours: { enabled: false, from: 22, to: 8 },
     reminders: Object.fromEntries(
@@ -38,6 +41,8 @@ export function mergeSettings(stored: unknown): Settings {
   const s = stored as Partial<Settings>
   return {
     theme: s.theme ?? base.theme,
+    // An unknown mode would leave the action wired to nothing, so validate it.
+    viewMode: VIEW_MODES.includes(s.viewMode as ViewMode) ? (s.viewMode as ViewMode) : base.viewMode,
     notificationsEnabled: s.notificationsEnabled ?? base.notificationsEnabled,
     quietHours: { ...base.quietHours, ...(s.quietHours ?? {}) },
     reminders: Object.fromEntries(
