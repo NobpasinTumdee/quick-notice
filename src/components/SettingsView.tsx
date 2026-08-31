@@ -95,7 +95,7 @@ export function SettingsView({
                     >
                       <div className="pt-2.5">
                         <IntervalSlider
-                          choices={meta.choices}
+                          label={meta.label}
                           value={conf.intervalMinutes}
                           onChange={(minutes) => onSetInterval(meta.id, minutes)}
                           accent={meta.tint.to}

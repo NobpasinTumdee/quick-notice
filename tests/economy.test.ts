@@ -33,9 +33,9 @@ const maxedSave: PlayerState = {
   l: MAX_LEVEL,
   e: 412,
   c: 1_840,
-  eq: [17, 26, 46],
+  eq: [19, 31, 49],
   u: ITEMS.map((i) => i.id),
-  t: 0b11111,
+  t: 0b1111111111,
   s: 4,
 }
 
@@ -151,11 +151,19 @@ test('a sound above the player level is not selectable', () => {
   assert.equal(mergePlayer({ ...defaultPlayer(), s: 4 }).s, 0, 'locked selection falls back')
 })
 
-test('every sound in the catalogue has audio shipped for it', async () => {
-  const { SOUND_DATA } = await import('../src/lib/sounds.generated.ts')
+test('every selectable sound has a real file behind it', async () => {
+  const { statSync } = await import('node:fs')
+  const { SOUND_KEYS, soundPath } = await import('../src/lib/sounds.generated.ts')
   for (const sound of SOUNDS) {
     if (sound.key === 'silent') continue
-    const data = SOUND_DATA[sound.key as keyof typeof SOUND_DATA]
-    assert.ok(data && data.length > 100, `${sound.name} has no audio payload`)
+    assert.ok(SOUND_KEYS.includes(sound.key as never), `${sound.name} is not in the audio manifest`)
+    // The pack is build output, so this also catches a stale public/sounds.
+    const bytes = statSync(`public/${soundPath(sound.key as never)}`).size
+    assert.ok(bytes > 1_000, `${sound.name} has a suspiciously small file (${bytes}B)`)
   }
+})
+
+test('the maxed save still fits after the catalogue expansion', () => {
+  // 30 items and 10 themes: the save grew by ids only, never by content.
+  assert.ok(estimateBytes(maxedSave) < 400)
 })

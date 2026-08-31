@@ -1,5 +1,5 @@
-import { SOUND_MAP } from './gamification'
-import type { SoundKey } from './sounds.generated'
+import { SOUND_MAP } from './inventory'
+import { soundPath, type SoundKey } from './sounds.generated'
 
 /** Built path of the offscreen document (see `offscreen.html` at the project root). */
 export const OFFSCREEN_URL = 'offscreen.html'
@@ -24,19 +24,38 @@ export function soundKeyFor(soundId: number): SoundKey | null {
 }
 
 /**
+ * Resolves a sound to a URL the current context can fetch.
+ *
+ * Inside the extension the pack lives at the extension root (`sounds/zen.wav`),
+ * so it needs `runtime.getURL` — an offscreen document resolving a relative path
+ * would look for it beside `offscreen.html`. A plain `npm run dev` tab has no
+ * `chrome.runtime`, and Vite serves `public/` from `/`, so it falls back there.
+ */
+export function soundUrl(key: SoundKey): string {
+  const path = soundPath(key)
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) return chrome.runtime.getURL(path)
+  } catch {
+    /* not an extension context */
+  }
+  return `/${path}`
+}
+
+/**
  * Plays a sound in a DOM context (popup or offscreen document).
- * The 42KB base64 pack is imported dynamically so it never lands in the popup's
- * initial chunk — the UI paints long before anyone asks for a sound.
+ *
+ * The pack is 11 files on disk rather than base64 in the bundle, so only the
+ * sound actually being played is ever fetched — and the UI chunk carries none of
+ * it. Chrome caches the file after the first play.
  */
 export async function playSoundKey(key: SoundKey | null, volume = 0.5): Promise<void> {
   if (!key) return
   try {
-    const { soundDataUri } = await import('./sounds.generated')
-    const audio = new Audio(soundDataUri(key))
+    const audio = new Audio(soundUrl(key))
     audio.volume = Math.max(0, Math.min(1, volume))
     await audio.play()
   } catch (error) {
-    // Autoplay policy, a missing key, or a closing popup: never worth throwing over.
+    // Autoplay policy, a missing file, or a closing popup: never worth throwing over.
     console.debug('[kawaii] sound skipped', error)
   }
 }

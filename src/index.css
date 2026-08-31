@@ -20,6 +20,12 @@
     --kw-accent-deep: 47 107 58;
     --kw-blush: 247 183 192;
     --kw-shadow: 47 107 58;
+
+    /* The themed ground. Painted on <body> in the panel, and on the rounded
+       shell in the popup — declared once so the two can never drift. */
+    --kw-canvas:
+      radial-gradient(120% 90% at 15% 0%, rgb(var(--kw-bg-start)) 0%, transparent 60%),
+      linear-gradient(160deg, rgb(var(--kw-bg-start)) 0%, rgb(var(--kw-bg-end)) 100%);
   }
 
   html,
@@ -38,9 +44,7 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
     color: rgb(var(--kw-ink));
-    background:
-      radial-gradient(120% 90% at 15% 0%, rgb(var(--kw-bg-start)) 0%, transparent 60%),
-      linear-gradient(160deg, rgb(var(--kw-bg-start)) 0%, rgb(var(--kw-bg-end)) 100%);
+    background: var(--kw-canvas);
     transition:
       background 400ms ease,
       color 300ms ease;
@@ -60,6 +64,17 @@
     width: 380px;
     height: 600px;
     max-height: 600px;
+    /*
+     * Chrome frames a popup in its own window, and a full-bleed gradient makes
+     * the UI read as a square patch glued into it. So in popup mode the ground
+     * moves off <body> and onto the shell, which is rounded and clipped below.
+     *
+     * What shows at the corners is the browser's own canvas — and because
+     * `applyTheme` sets `color-scheme` per theme, that canvas is white under the
+     * light themes and near-black under Midnight, rather than four white notches
+     * punched out of a dark UI.
+     */
+    background: transparent;
   }
 
   button {
@@ -71,6 +86,32 @@
   .kw-shell {
     /* Keeps the popup edges crisp against Chrome's own white chrome. */
     isolation: isolate;
+  }
+
+  /*
+   * Soft corners in popup mode only. The side panel is docked flush to the
+   * browser edge, where rounding would read as a rendering fault rather than as
+   * a card; the popup floats, so it gets to be a card. `overflow-hidden` on the
+   * shell clips the aurora blobs to the same curve.
+   */
+  :root[data-surface='popup'] .kw-shell {
+    border-radius: 18px;
+    border: 1px solid rgb(var(--kw-edge) / 0.28);
+    background: var(--kw-canvas);
+    box-shadow: inset 0 1px 0 rgb(var(--kw-edge) / 0.4);
+    transition: background 400ms ease;
+  }
+
+  /* Number field in the interval pill: the native spinners are far too heavy
+     for a 3-character box, and the slider already covers stepping. */
+  .kw-number {
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  .kw-number::-webkit-outer-spin-button,
+  .kw-number::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
   }
 
   /* Thin, theme-tinted scrollbar for the settings pane. */

@@ -1,5 +1,5 @@
-import { buyItem, defaultPlayer, equipItem, grantCompletion } from './gamification'
-import { defaultSettings, defaultStats } from './storage'
+import { buyItem, checkClaim, defaultPlayer, equipItem, grantCompletion } from './gamification'
+import { defaultSettings, defaultStats, dueAfter } from './storage'
 import type { CompanionState, PopupMessage } from './types'
 
 const hasRuntime = () =>
@@ -28,10 +28,11 @@ function mockState(): CompanionState {
     settings: defaultSettings(),
     stats: { ...defaultStats(), streakDays: 3, totalCompleted: 12 },
     player: { ...defaultPlayer(), l: 6, e: 45, c: 480, u: [11, 21, 41], eq: [11, 21, 0], t: 0b1111 },
+    // One habit already due, so a dev tab can exercise both button states.
     schedule: {
       hydration: Date.now() + 12 * 60_000,
       posture: Date.now() + 4 * 60_000,
-      eyes: Date.now() + 90_000,
+      eyes: Date.now() - 30_000,
       stretch: Date.now() + 41 * 60_000,
     },
   }
@@ -47,10 +48,21 @@ function mockResponse(message: PopupMessage): unknown {
       state.settings = message.settings
       return { ok: true, schedule: state.schedule }
     case 'COMPLETE_REMINDER': {
+      // Mirrors the worker's cooldown, so the mock cannot be farmed either.
+      const conf = state.settings.reminders[message.id]
+      const check = checkClaim(conf.enabled, state.schedule[message.id], Date.now())
+      if (!check.ok) {
+        return { ok: false, reason: check.reason, waitMs: check.waitMs, schedule: state.schedule }
+      }
       state.stats.completedToday[message.id] += 1
       state.stats.totalCompleted += 1
       state.player = grantCompletion(state.player, state.stats.streakDays).player
+      state.schedule = { ...state.schedule, [message.id]: dueAfter(conf.intervalMinutes) }
       return { ok: true, stats: state.stats, player: state.player, schedule: state.schedule }
+    }
+    case 'SNOOZE_REMINDER': {
+      state.schedule = { ...state.schedule, [message.id]: dueAfter(message.minutes) }
+      return { ok: true, schedule: state.schedule }
     }
     case 'EQUIP_ITEM':
       state.player = equipItem(state.player, message.slot, message.itemId)

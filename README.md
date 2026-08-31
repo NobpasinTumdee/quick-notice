@@ -19,19 +19,30 @@ settings at any time.
 | 👀 **Eye Rest** | the 20-20-20 rule |
 | 🚶 **Stretch** | every 20 min – 2 h |
 
-- **Animated mascot** — idle breathing, random blinks, a bouncy squash on poke, and a
-  different face per reminder (thirsty, sleepy, stretching, happy, wink).
+- **Animated mascot** — idle breathing, random blinks, a bouncy squash on poke, and ten
+  expressions: a face per reminder (thirsty, sleepy, stretching), plus happy, wink, **focused**
+  (headband on, shown once you are a few habits into the day), **cool** (shades) and **dizzy**
+  (swirl eyes, when three nudges are stacked up waiting). Expressions are state, never
+  inventory — they cost nothing and are stored nowhere. Try them in the wardrobe's *Face* strip.
 - **Wellness RPG** — every completed habit pays EXP and coins. EXP levels you up, levels put
   new gear on the shop shelf, and coins buy it. See [Progression](#progression).
-- **Wardrobe** — 19 layered SVG wearables across three slots (head / outfit / prop), each
-  previewed on Momo before you buy. Equipped items ride along on the mascot everywhere,
-  including the level-up screen and notifications view.
-- **Five themes** — Matcha Green, Sakura Pink, Ocean Blue, Midnight, Sunset Peach, unlocked
-  by level. Every colour is a CSS variable, so switching repaints instantly and the mascot
-  recolours with it.
-- **Sound packs** — six notification sounds, synthesised at build time and unlocked as you
-  level. Played through an offscreen document, since MV3 workers cannot play audio.
-- **Per-reminder control** — toggle each habit and pick its interval on a snapped slider.
+- **Wardrobe** — 30 layered SVG wearables across three slots (head / outfit / prop), each
+  previewed on Momo before you buy, and each ranked Common → Legendary. Recent arrivals include
+  Audiophile IEMs, a Mecha V-Fin, an Oversized Sweater, a Ninja Suit, a Hacker Hoodie, a Space
+  Suit, a Gaming Mouse and a Mechanical Keyboard. Equipped items ride along on the mascot
+  everywhere, including the level-up screen and notifications view.
+- **Ten themes** — Matcha Green, Sakura Pink, Ocean Blue, Midnight, Sunset Peach, Cozy Cafe,
+  Lofi Chill, Galactic Nebula, Mecha Strike and Cyber Hacker, unlocked by level. Every colour
+  is a CSS variable, so switching repaints instantly, the mascot recolours with it, and the
+  dark themes also flip `color-scheme` so the browser's own canvas follows.
+- **Sound packs** — ten notification sounds, unlocked as you level: Default Ping, Cute Pop,
+  Retro 8-bit, Wind Chime, Bubble, Zen Bell, Cat Meow, Mecha Lock-on, Math Rock Riff, and
+  Silent. All synthesised at build time — see [Sound](#sound) — and played through an offscreen
+  document, since MV3 workers cannot play audio.
+- **Per-reminder control** — toggle each habit and set its interval to the exact minute, from
+  1 to 180, by dragging or by typing.
+- **One reward per interval** — **Done ✓** unlocks when a habit falls due and re-locks the
+  moment it is claimed, so the button cannot be farmed. See [Cooldowns](#cooldowns).
 - **Quiet hours** — Momo stays silent overnight (or whenever you say) without losing the cycle.
 - **Soft notifications** — silent, low priority, with **Done ✓** and **Snooze 5 min** buttons,
   illustrated with per-habit mascot art.
@@ -89,15 +100,16 @@ src/
     ViewModePicker.tsx      side panel vs popup, with a diagram of each
     TabBar.tsx              Momo / Shop / Setup, with a spring-shared pill
     Toggle.tsx              spring pill switch
-    IntervalSlider.tsx      range input snapped to curated intervals
+    IntervalSlider.tsx      1-minute range input paired with a typed number field
     GlassCard.tsx           the frosted surface everything is built from
     Header.tsx              level ring, title, streak, purse
     SpeechBubble.tsx        tail-pointed bubble with a pop transition
   hooks/useCompanion.ts     popup state: optimistic writes, debounced persistence
   lib/
-    gamification.ts         the save format, level curve, item catalogue, shop rules
+    gamification.ts         the save format, level curve, cooldown guard, shop rules
+    inventory.ts            THE CATALOGUE: 30 items, 10 sound packs, theme unlock levels
     audio.ts                sound selection + offscreen-document plumbing
-    sounds.generated.ts     GENERATED base64 WAVs (npm run sounds)
+    sounds.generated.ts     GENERATED key manifest for public/sounds (npm run sounds)
     surface.ts              reads the ?surface flag: popup vs side panel
     themes.ts               palettes + `applyTheme()` (writes CSS custom properties)
     reminders.ts            the habit catalogue: copy, tints, intervals, praise lines
@@ -105,9 +117,12 @@ src/
     bridge.ts               messaging to the worker, with a dev-mode mock
     format.ts               countdown / interval / hour formatting
 scripts/generate-icons.mjs   draws every PNG from code (no binary assets in the repo)
-scripts/generate-sounds.mjs  synthesises the sound pack into sounds.generated.ts
+scripts/generate-sounds.mjs  synthesises 11 WAVs into public/sounds (no binary assets either)
 tests/economy.test.ts        13 tests over the economy and the storage schema
 tests/settings.test.ts       6 tests over settings migration and view-mode validation
+tests/cooldown.test.ts       11 tests over the claim guard, the ledger and interval clamping
+tests/worker.test.ts         10 tests driving the real worker against an in-memory chrome
+tests/inventory.test.ts      9 tests pinning ids, id ranges, theme bits and item/art pairing
 ```
 
 **The service worker owns all timing.** The UI only ever reads state and sends intents
@@ -164,11 +179,83 @@ centres past 520px so a widened panel does not stretch cards, Momo stays **pinne
 while the habit list scrolls under her with a frosted fade, habits became full-width rows, and
 the shop grows to three columns past 430px.
 
-**Marking a habit done restarts its cycle**, so an early sip means the next nudge is a full
-interval away rather than seconds later.
+**Settings live in `chrome.storage.sync`** (they follow the user across devices); stats, the
+pending-badge list and the cooldown ledger live in `chrome.storage.local`.
 
-**Settings live in `chrome.storage.sync`** (they follow the user across devices); stats and
-the pending-badge list live in `chrome.storage.local`.
+## Cooldowns
+
+Each habit carries a `nextDue` timestamp — the moment its nudge fires and its **Done ✓**
+button unlocks. They live together in one local item, `kw:due`:
+
+```json
+{ "hydration": 1710000000000, "posture": 1710000600000, "eyes": null, "stretch": 1710002400000 }
+```
+
+`null` means the reminder is switched off. Local rather than sync: these move on every
+completion, snooze and alarm, which is far too churny for sync's 1800-writes-per-hour ceiling,
+and a cooldown belongs to the machine you are sitting at rather than to the account.
+
+The rule itself is one pure function, `checkClaim(enabled, dueAt, now)` in `gamification.ts`.
+The UI calls it to grey the button out; **the worker calls it again before minting anything**,
+which is the call that counts — a crafted `COMPLETE_REMINDER` message skips the button
+entirely, so a refused claim must leave the save untouched. Claiming rearms the alarm and the
+cooldown from the same interval, so the countdown on screen is the one the nudge will honour.
+
+A few consequences worth knowing:
+
+- An ignored nudge stays claimable. The periodic alarm rolls forward on its own; the ledger
+  does not, so a habit that came due an hour ago is still owed — but it is owed **once**,
+  not once per missed cycle.
+- Muted notifications and quiet hours silence the nudge without withholding the reward: the
+  interval still elapsed.
+- Switching a habit off and back on starts a fresh interval, so toggling cannot mint a claim.
+- Retuning an interval restarts a running countdown, but never swallows a claim you have
+  already earned.
+- Snoozing pushes the claim out with the nudge — otherwise it would just be a slower **Done**.
+
+## The catalogue
+
+Items, sound packs and theme unlock levels all live in `src/lib/inventory.ts`, and **none of it
+is ever written to storage**. The save holds integer ids only — `eq: [head, outfit, prop]`,
+`u: number[]`, a sound id, and a theme bitmask — so the catalogue can keep growing without the
+save growing with it. Expanding from 19 items and 5 themes to 30 items and 10 themes cost the
+save exactly zero extra bytes per item owned beyond the id itself; a fully maxed save is still
+under 400 bytes, which `tests/economy.test.ts` enforces.
+
+Three things in there are permanent, because they *are* the save format:
+
+| | Why it can never change |
+|---|---|
+| **Item ids** (head 10-19, outfit 20-39, prop 40-59) | An id that disappears is dropped from every save that owned it |
+| **Sound ids** | `PlayerState['s']` stores the number, not the name — which is why `Silent` keeps id 5 instead of moving to the end of the list |
+| **Theme order in `THEMES`** | Unlocks are a bitmask indexed by position, so new themes are only ever appended. `tests/inventory.test.ts` pins the original five indices |
+
+Rarity runs Common → Rare → Epic → Legendary, and the tests check that each slot offers a full
+ladder, that dearer tiers really are dearer, that every item's `part` key has art behind it in
+`components/mascot/parts.tsx`, and that nothing unlocks at the level cap itself.
+
+## Sound
+
+The pack is **generated, not licensed**: `scripts/generate-sounds.mjs` synthesises all eleven
+WAVs from scratch (16-bit mono, 22.05 kHz) into `public/sounds/`, which is git-ignored build
+output exactly like `public/icons/`. Nothing binary is checked in, and nothing is downloaded.
+
+They used to be base64 data URIs inlined in the bundle — every player shipped 43 KB of audio
+whether or not they ever changed the sound. As files, Chrome fetches only the one that plays.
+
+A couple of them are more than beeps:
+
+- **Zen Bell** uses *inharmonic* partials (roughly 1 : 2.7 : 5.4 : 8.9, the ratios a singing
+  bowl actually rings at) with two slightly detuned copies of the fundamental, which is where
+  the slow beating comes from. Whole-number harmonics would just sound like an organ.
+- **Math Rock Riff** is Karplus-Strong: a noise burst circulated through a delay line one
+  period long and averaged each lap, which genuinely behaves like a plucked string. The taps
+  are grouped in 7/8 over an open drone, because of course they are.
+- **Cat Meow** is mostly *contour* — a pitch arc up and back down through two sweeping
+  formants. Get the arc right and a crude source reads as feline.
+
+Sounds are deterministic: the noise generator is seeded, so a rebuild produces byte-identical
+files.
 
 ## Progression
 
@@ -180,7 +267,9 @@ the pending-badge list live in `chrome.storage.local`.
 | Cap | level 50 |
 
 Levels put items **on the shelf**; coins **buy** them. Themes and sound packs need only the
-level. Buying an item equips it immediately, and tapping a worn item takes it off.
+level. Buying an item equips it immediately, and tapping a worn item takes it off. The
+catalogue runs to level 26 (Cyber Hacker), so there is something to unlock most of the way to
+the cap — see [The catalogue](#the-catalogue).
 
 ### The save format
 
@@ -199,12 +288,13 @@ interface PlayerState {
 }
 ```
 
-**A fully maxed save — every item owned, every theme unlocked — is 126 bytes**, about 1.5% of
-the 8 KB per-item quota and 0.1% of the 100 KB total. `estimateBytes()` measures it and
+**A fully maxed save — all 30 items owned, all 10 themes unlocked — is 161 bytes**, about 2% of
+the 8 KB per-item quota and 0.16% of the 100 KB total. `estimateBytes()` measures it and
 `tests/economy.test.ts` fails the build if the schema ever grows past 400 bytes.
 
-Nothing but ids is stored. SVG parts are React components in `components/mascot/parts.tsx`,
-audio is base64 in the bundle, themes are CSS variables. `mergePlayer()` treats storage as
+Nothing but ids is stored. The catalogue is `lib/inventory.ts`, SVG parts are React components
+in `components/mascot/parts.tsx`, audio is WAV files in `public/sounds/`, themes are CSS
+variables. `mergePlayer()` treats storage as
 untrusted: unknown item ids are dropped, equips referencing unowned items are cleared, the
 level is clamped, and level-derived unlocks are re-derived — so a synced save from a newer
 build (or a corrupted one) can never equip art this build does not have.
@@ -224,8 +314,9 @@ pages you browse.
 
 ## Notes
 
-- Chrome enforces a **1-minute minimum** on alarm periods; every interval offered here is
-  well above it.
+- Chrome enforces a **1-minute minimum** on alarm periods, which is exactly the floor the
+  interval control offers; anything reaching an alarm goes through `clampInterval()`, since a
+  non-finite period would throw and take the whole cycle down with it.
 - `chrome.action.openPopup()` (used when a notification body is clicked) needs Chrome 127+;
   it fails silently on older builds and the toolbar icon still works.
 - `prefers-reduced-motion` disables the animations, including Momo's breathing.

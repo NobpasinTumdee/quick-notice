@@ -199,14 +199,21 @@ export function useCompanion(): UseCompanion {
     async (id: ReminderId) => {
       const before = player
       const expected = completionReward(stats.streakDays)
-      const res = await send<{ stats: Stats; player: PlayerState; schedule: Schedule }>({
-        type: 'COMPLETE_REMINDER',
-        id,
-      })
+      const res = await send<{
+        ok: boolean
+        stats?: Stats
+        player?: PlayerState
+        schedule?: Schedule
+      }>({ type: 'COMPLETE_REMINDER', id })
       if (res?.stats) setStats(res.stats)
       if (res?.schedule) setSchedule(res.schedule)
 
-      const after = res?.player
+      // The worker refused: the habit is still on cooldown. It minted nothing,
+      // so there is nothing to celebrate — the fresh schedule above re-locks the
+      // button that let this through.
+      if (!res?.ok) return
+
+      const after = res.player
       if (after) {
         setPlayer(after)
         const levelsGained = after.l - before.l

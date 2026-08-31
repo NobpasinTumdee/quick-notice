@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useMemo, useState } from 'react'
 import type { Celebration } from '../hooks/useCompanion'
 import { formatApprox, formatCountdown, greeting } from '../lib/format'
+import { checkClaim } from '../lib/gamification'
 import { REMINDERS, REMINDER_MAP, pickOne } from '../lib/reminders'
 import type { Theme } from '../lib/themes'
 import type { MascotMood, PlayerState, ReminderId, Schedule, Settings, Stats } from '../lib/types'
@@ -22,12 +23,14 @@ interface HomeViewProps {
   onSnooze: (id: ReminderId) => Promise<void> | void
 }
 
-const POKE_LINES = [
-  'Boop! 💫',
-  'Hehe, that tickles.',
-  'You are doing great today.',
-  'Sip, stretch, repeat!',
-  'I believe in you 🌱',
+/** Poking cycles through the expression set, so the new faces get an airing. */
+const POKE_REACTIONS: { mood: MascotMood; line: string }[] = [
+  { mood: 'wink', line: 'Boop! 💫' },
+  { mood: 'happy', line: 'Hehe, that tickles.' },
+  { mood: 'cool', line: 'Momo knows what is up.' },
+  { mood: 'dizzy', line: 'Whoa — too much spin!' },
+  { mood: 'focused', line: 'Locked in. Let us go.' },
+  { mood: 'excited', line: 'I believe in you 🌱' },
 ]
 
 export function HomeView({
@@ -52,7 +55,10 @@ export function HomeView({
     return candidates[0] ?? null
   }, [schedule, settings.reminders])
 
-  const due = next ? next.at - now <= 0 : false
+  // `schedule` holds each habit's nextDue, so "is it claimable" and "is the
+  // countdown over" are the same question — asked through the same guard the
+  // worker uses, so the button and the payout can never disagree.
+  const due = next ? checkClaim(true, next.at, now).ok : false
 
   useEffect(() => {
     if (!flash) return
@@ -60,7 +66,26 @@ export function HomeView({
     return () => window.clearTimeout(timer)
   }, [flash])
 
-  const mood: MascotMood = flash?.mood ?? (due && next ? next.meta.mood : 'idle')
+  const doneToday = Object.values(stats.completedToday).reduce((a, b) => a + b, 0)
+
+  // Habits whose timer ran out and are still waiting to be claimed.
+  const overdue = REMINDERS.filter(
+    (r) => settings.reminders[r.id].enabled && checkClaim(true, schedule[r.id], now).ok,
+  ).length
+
+  /**
+   * The resting face reflects how the day is going: overwhelmed when nudges are
+   * piling up, in-the-zone once a few habits are done, plain idle otherwise.
+   */
+  const mood: MascotMood =
+    flash?.mood ??
+    (overdue >= 3
+      ? 'dizzy'
+      : due && next
+        ? next.meta.mood
+        : doneToday >= 3
+          ? 'focused'
+          : 'idle')
 
   // The precise countdown lives on the hero card. Here it is rounded to whole
   // minutes so Momo is not re-reading the clock at you once a second.
@@ -77,8 +102,6 @@ export function HomeView({
     : next
       ? `next:${next.meta.id}:${due ? 'due' : 'waiting'}`
       : 'idle'
-
-  const doneToday = Object.values(stats.completedToday).reduce((a, b) => a + b, 0)
 
   const complete = async (id: ReminderId) => {
     setFlash({ mood: 'happy', line: pickOne(REMINDER_MAP[id].praise) })
@@ -102,7 +125,7 @@ export function HomeView({
             palette={theme.mascot}
             equipped={player.eq}
             size={132}
-            onPoke={() => setFlash({ mood: 'wink', line: pickOne(POKE_LINES) })}
+            onPoke={() => setFlash(pickOne(POKE_REACTIONS))}
           />
           <RewardFloat celebration={celebration} />
         </div>
@@ -164,10 +187,19 @@ export function HomeView({
                 </p>
               </div>
 
-              <TactileButton onClick={() => void complete(next.meta.id)} variant="primary">
+              <TactileButton
+                onClick={() => void complete(next.meta.id)}
+                variant="primary"
+                disabled={!due}
+                title={due ? undefined : `Ready in ${formatCountdown(next.at, now)}`}
+              >
                 Done ✓
               </TactileButton>
-              <TactileButton onClick={() => void onSnooze(next.meta.id)} variant="ghost">
+              <TactileButton
+                onClick={() => void onSnooze(next.meta.id)}
+                variant="ghost"
+                disabled={!due}
+              >
                 +5m
               </TactileButton>
             </GlassCard>
@@ -218,7 +250,7 @@ function HabitRow({
   now: number
   onComplete: () => void
 }) {
-  const ready = enabled && at !== null && at - now <= 0
+  const ready = checkClaim(enabled, at, now).ok
 
   return (
     <motion.div
@@ -250,24 +282,34 @@ function HabitRow({
         </span>
       )}
 
+      {/* Only claimable habits are clickable: the reward is on cooldown until the
+          interval elapses, and a live-looking button would just invite the tap
+          the worker is about to refuse. */}
       <motion.button
         type="button"
-        disabled={!enabled}
+        disabled={!ready}
         onClick={onComplete}
-        whileHover={enabled ? { y: -1, scale: 1.05 } : undefined}
-        whileTap={enabled ? { scale: 0.93 } : undefined}
+        whileHover={ready ? { y: -1, scale: 1.05 } : undefined}
+        whileTap={ready ? { scale: 0.93 } : undefined}
         transition={{ type: 'spring', stiffness: 520, damping: 24 }}
-        aria-label={`Mark ${meta.label.toLowerCase()} done`}
-        className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[13px] font-black focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25 ${
-          ready ? 'text-white shadow-float' : 'border border-edge/50 text-inkSoft'
+        aria-label={
+          ready
+            ? `Mark ${meta.label.toLowerCase()} done`
+            : `${meta.label} is not due yet${at && enabled ? ` — ready in ${formatCountdown(at, now)}` : ''}`
+        }
+        title={ready ? undefined : 'Not due yet'}
+        className={`grid h-8 w-8 shrink-0 place-items-center rounded-full text-[13px] font-black transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25 ${
+          ready
+            ? 'text-white shadow-float'
+            : 'cursor-not-allowed border border-edge/40 text-inkFaint/70'
         }`}
         style={
           ready
             ? { background: 'rgb(var(--kw-accent))' }
-            : { background: 'rgb(var(--kw-surface) / var(--kw-glass-soft))' }
+            : { background: 'rgb(var(--kw-ink) / 0.06)' }
         }
       >
-        ✓
+        {ready ? '✓' : <span className="opacity-60">⏳</span>}
       </motion.button>
     </motion.div>
   )
@@ -299,26 +341,38 @@ function TactileButton({
   children,
   onClick,
   variant,
+  disabled = false,
+  title,
 }: {
   children: React.ReactNode
   onClick: () => void
   variant: 'primary' | 'ghost'
+  disabled?: boolean
+  title?: string
 }) {
   const primary = variant === 'primary'
   return (
     <motion.button
       type="button"
       onClick={onClick}
-      whileHover={{ y: -1, scale: 1.04 }}
-      whileTap={{ scale: 0.93, y: 0 }}
+      disabled={disabled}
+      title={title}
+      whileHover={disabled ? undefined : { y: -1, scale: 1.04 }}
+      whileTap={disabled ? undefined : { scale: 0.93, y: 0 }}
       transition={{ type: 'spring', stiffness: 520, damping: 24 }}
-      className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-bold focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25 ${
-        primary ? 'text-white shadow-float' : 'border border-edge/50 text-inkSoft'
+      className={`shrink-0 rounded-full px-2.5 py-1.5 text-[11px] font-bold transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25 ${
+        disabled
+          ? 'cursor-not-allowed border border-edge/40 text-inkFaint/70'
+          : primary
+            ? 'text-white shadow-float'
+            : 'border border-edge/50 text-inkSoft'
       }`}
       style={
-        primary
-          ? { background: 'rgb(var(--kw-accent))' }
-          : { background: 'rgb(var(--kw-surface) / var(--kw-glass-soft))' }
+        disabled
+          ? { background: 'rgb(var(--kw-ink) / 0.06)' }
+          : primary
+            ? { background: 'rgb(var(--kw-accent))' }
+            : { background: 'rgb(var(--kw-surface) / var(--kw-glass-soft))' }
       }
     >
       {children}

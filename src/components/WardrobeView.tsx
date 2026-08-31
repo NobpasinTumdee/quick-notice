@@ -15,7 +15,7 @@ import {
   type PurchaseError,
 } from '../lib/gamification'
 import type { Theme } from '../lib/themes'
-import type { PlayerState, Slot } from '../lib/types'
+import type { MascotMood, PlayerState, Slot } from '../lib/types'
 import { GlassCard } from './GlassCard'
 import { LevelBar } from './LevelBar'
 import { Mascot } from './Mascot'
@@ -36,6 +36,19 @@ const TABS: { id: Tab; label: string; emoji: string }[] = [
   { id: 'sound', label: 'Sound', emoji: '🔔' },
 ]
 
+/**
+ * Expressions, not inventory: these are free, always available, and never
+ * written to storage. The strip exists so the faces are discoverable at all —
+ * otherwise you would only ever meet them by accident.
+ */
+const FACES: { mood: MascotMood; label: string; emoji: string }[] = [
+  { mood: 'happy', label: 'Happy', emoji: '😊' },
+  { mood: 'sleepy', label: 'Sleepy', emoji: '😴' },
+  { mood: 'focused', label: 'Focused', emoji: '🎯' },
+  { mood: 'cool', label: 'Cool', emoji: '😎' },
+  { mood: 'dizzy', label: 'Dizzy', emoji: '💫' },
+]
+
 const PURCHASE_COPY: Record<PurchaseError, string> = {
   poor: 'Not enough coins yet!',
   locked: 'Level up to unlock this.',
@@ -52,6 +65,7 @@ export function WardrobeView({
   onPreviewSound,
 }: WardrobeViewProps) {
   const [tab, setTab] = useState<Tab>('head')
+  const [face, setFace] = useState<MascotMood>('happy')
   const [toast, setToast] = useState<string | null>(null)
 
   const items = useMemo(() => (tab === 'sound' ? [] : itemsForSlot(tab)), [tab])
@@ -71,7 +85,7 @@ export function WardrobeView({
       <GlassCard tone="raised" className="px-3 py-2.5">
         <div className="flex items-center gap-3">
           <div className="-my-2 shrink-0">
-            <Mascot mood="happy" palette={theme.mascot} equipped={player.eq} size={72} />
+            <Mascot mood={face} palette={theme.mascot} equipped={player.eq} size={72} />
           </div>
           <div className="min-w-0 flex-1">
             <LevelBar player={player} showBadge={false} showCoins={false} />
@@ -98,6 +112,38 @@ export function WardrobeView({
               </button>
             )
           })}
+        </div>
+
+        {/* Try an expression on whatever Momo is currently wearing. */}
+        <div className="mt-2 flex items-center gap-1.5 border-t border-ink/10 pt-2">
+          <span className="text-[8.5px] font-extrabold uppercase tracking-[0.14em] text-inkFaint">
+            Face
+          </span>
+          <div className="flex flex-1 justify-end gap-1">
+            {FACES.map((entry) => {
+              const active = entry.mood === face
+              return (
+                <motion.button
+                  key={entry.mood}
+                  type="button"
+                  onClick={() => setFace(entry.mood)}
+                  whileTap={{ scale: 0.9 }}
+                  aria-pressed={active}
+                  aria-label={`Preview the ${entry.label.toLowerCase()} face`}
+                  title={entry.label}
+                  className="grid h-6 w-6 place-items-center rounded-full border text-[11px] leading-none transition-colors focus:outline-none focus-visible:ring-4 focus-visible:ring-accent/25"
+                  style={{
+                    background: active
+                      ? 'rgb(var(--kw-accent) / 0.16)'
+                      : 'rgb(var(--kw-surface) / var(--kw-glass-soft))',
+                    borderColor: active ? 'rgb(var(--kw-accent))' : 'rgb(var(--kw-edge) / 0.4)',
+                  }}
+                >
+                  {entry.emoji}
+                </motion.button>
+              )
+            })}
+          </div>
         </div>
       </GlassCard>
 

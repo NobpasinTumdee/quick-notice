@@ -7,6 +7,8 @@
 import { isAudioMessage, playKeyFromWorker, playSoundFromWorker } from '../lib/audio'
 import {
   buyItem,
+  checkClaim,
+  type ClaimDenial,
   equipItem,
   grantCompletion,
   ITEM_MAP,
@@ -16,14 +18,18 @@ import {
   SOUND_MAP,
   soundUnlocked,
 } from '../lib/gamification'
-import { REMINDER_IDS, REMINDER_MAP, pickOne } from '../lib/reminders'
+import { clampInterval, REMINDER_IDS, REMINDER_MAP, pickOne } from '../lib/reminders'
 import {
   applyCompletion,
   defaultSettings,
+  dueAfter,
   isQuiet,
+  loadDue,
   loadSettings,
   loadStats,
+  retimeDue,
   rollOverDay,
+  saveDue,
   saveSettings,
   saveStats,
   SETTINGS_KEY,
@@ -36,6 +42,7 @@ import type {
   ReminderId,
   Schedule,
   Settings,
+  Stats,
   ViewMode,
 } from '../lib/types'
 
@@ -58,10 +65,15 @@ function reminderFromAlarm(name: string): ReminderId | null {
 
 /* ------------------------------------------------------------------ alarms */
 
-/** Makes the live alarm set match the settings, recreating only what changed. */
-async function syncAlarms(settings: Settings): Promise<void> {
+/**
+ * Makes the live alarm set match the settings, recreating only what changed, and
+ * keeps the cooldown ledger in step with it. Returns the resulting ledger.
+ */
+async function syncAlarms(settings: Settings): Promise<Schedule> {
+  const now = Date.now()
   const existing = await chrome.alarms.getAll()
   const byName = new Map(existing.map((a) => [a.name, a]))
+  let due = await loadDue(settings, now)
 
   for (const id of REMINDER_IDS) {
     const conf = settings.reminders[id]
@@ -75,27 +87,26 @@ async function syncAlarms(settings: Settings): Promise<void> {
     }
     // Chrome keeps periodInMinutes on the alarm, so a mismatch means the user
     // moved the slider and we owe them a fresh cycle.
-    if (!current || current.periodInMinutes !== conf.intervalMinutes) {
-      await chrome.alarms.create(name, {
-        delayInMinutes: conf.intervalMinutes,
-        periodInMinutes: conf.intervalMinutes,
-      })
+    const minutes = clampInterval(conf.intervalMinutes)
+    if (!current || current.periodInMinutes !== minutes) {
+      await chrome.alarms.create(name, { delayInMinutes: minutes, periodInMinutes: minutes })
+      due = retimeDue(due, id, minutes, now)
     }
   }
+
+  await saveDue(due)
+  return due
 }
 
-async function readSchedule(): Promise<Schedule> {
-  const alarms = await chrome.alarms.getAll()
-  const schedule: Schedule = {}
-  for (const id of REMINDER_IDS) schedule[id] = null
-  for (const alarm of alarms) {
-    const id = reminderFromAlarm(alarm.name)
-    if (!id) continue
-    const soonest = schedule[id]
-    // A snooze alarm fires before the periodic one; show whichever lands first.
-    schedule[id] = soonest ? Math.min(soonest, alarm.scheduledTime) : alarm.scheduledTime
-  }
-  return schedule
+/**
+ * The cooldown ledger, repaired against current settings.
+ *
+ * Reading alarms instead would be wrong twice over: a periodic alarm rolls its
+ * own clock forward, so an unclaimed habit would appear to be counting down
+ * again, and the ledger has to survive the alarm being dropped or rebuilt.
+ */
+async function readSchedule(settings: Settings): Promise<Schedule> {
+  return loadDue(settings)
 }
 
 /* ----------------------------------------------------------------- badging */
@@ -180,30 +191,63 @@ async function celebrateLevelUp(player: PlayerState, summary: LevelUpSummary): P
   }
 }
 
-async function completeReminder(id: ReminderId): Promise<{ player: PlayerState }> {
-  const stats = applyCompletion(await loadStats(), id)
+type CompleteResult =
+  | { ok: true; player: PlayerState; stats: Stats; schedule: Schedule }
+  | { ok: false; reason: ClaimDenial; waitMs: number; schedule: Schedule }
+
+/**
+ * Claims a habit — the only path that mints EXP or coins.
+ *
+ * The cooldown is enforced *here*, not in the UI. A greyed-out button stops the
+ * honest case, but `chrome.runtime.sendMessage({type:'COMPLETE_REMINDER'})` from
+ * any extension page would sail straight past it, so the worker re-checks the
+ * ledger it owns and refuses without touching the save.
+ */
+async function completeReminder(id: ReminderId): Promise<CompleteResult> {
+  const now = Date.now()
+  const settings = await loadSettings()
+  const conf = settings.reminders[id]
+  const due = await loadDue(settings, now)
+
+  const check = checkClaim(conf.enabled, due[id], now)
+  if (!check.ok) {
+    return { ok: false, reason: check.reason, waitMs: check.waitMs, schedule: due }
+  }
+
+  const stats = applyCompletion(await loadStats(), id, new Date(now))
   await saveStats(stats)
   await setPending((await getPending()).filter((p) => p !== id))
 
   // Streak is already advanced by applyCompletion, so the bonus reflects today.
   const player = await rewardCompletion(stats.streakDays)
 
-  // Completing early restarts the cycle, so the next nudge is a full interval away.
-  const settings = await loadSettings()
-  const conf = settings.reminders[id]
+  // Claiming restarts the cycle: alarm and cooldown are rearmed from the same
+  // interval so the countdown the user sees is the one the nudge will honour.
+  const minutes = clampInterval(conf.intervalMinutes)
   await chrome.alarms.clear(snoozeName(id))
-  if (conf.enabled) {
-    await chrome.alarms.create(alarmName(id), {
-      delayInMinutes: conf.intervalMinutes,
-      periodInMinutes: conf.intervalMinutes,
-    })
-  }
-  return { player }
+  await chrome.alarms.create(alarmName(id), { delayInMinutes: minutes, periodInMinutes: minutes })
+
+  const schedule: Schedule = { ...due, [id]: dueAfter(minutes, now) }
+  await saveDue(schedule)
+
+  return { ok: true, player, stats, schedule }
 }
 
-async function snoozeReminder(id: ReminderId, minutes: number): Promise<void> {
-  await chrome.alarms.create(snoozeName(id), { delayInMinutes: minutes })
+/**
+ * Pushes a habit out by `minutes`. The nudge and the claim move together — a
+ * snooze that left the button live would just be a slower "Done".
+ */
+async function snoozeReminder(id: ReminderId, minutes: number): Promise<Schedule> {
+  const now = Date.now()
+  const wait = Math.min(180, Math.max(1, Math.round(minutes)))
+  await chrome.alarms.create(snoozeName(id), { delayInMinutes: wait })
   await setPending((await getPending()).filter((p) => p !== id))
+
+  const settings = await loadSettings()
+  const due = await loadDue(settings, now)
+  const schedule: Schedule = { ...due, [id]: now + wait * 60_000 }
+  await saveDue(schedule)
+  return schedule
 }
 
 /* ------------------------------------------------------- surface (popup/panel) */
@@ -295,8 +339,16 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!id) return
 
   const settings = await loadSettings()
-  if (!settings.notificationsEnabled) return
   if (!settings.reminders[id].enabled) return
+
+  // The interval has elapsed, so the habit is claimable from now on — whether or
+  // not we are allowed to say anything about it. Quiet hours and muted
+  // notifications silence the nudge, they do not withhold the reward.
+  const now = Date.now()
+  const due = await loadDue(settings, now)
+  if ((due[id] ?? 0) > now) await saveDue({ ...due, [id]: now })
+
+  if (!settings.notificationsEnabled) return
   if (isQuiet(settings)) return // stay silent, but keep the cycle running
 
   // Keep the daily counters honest even if the popup never opens.
@@ -350,30 +402,24 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
           settings,
           stats,
           player,
-          schedule: await readSchedule(),
+          schedule: await readSchedule(settings),
         }
         sendResponse(state)
         return
       }
       case 'UPDATE_SETTINGS': {
         await saveSettings(message.settings)
-        await syncAlarms(message.settings)
-        sendResponse({ ok: true, schedule: await readSchedule() })
+        sendResponse({ ok: true, schedule: await syncAlarms(message.settings) })
         return
       }
       case 'COMPLETE_REMINDER': {
-        const { player } = await completeReminder(message.id)
-        sendResponse({
-          ok: true,
-          stats: await loadStats(),
-          player,
-          schedule: await readSchedule(),
-        })
+        // A refusal still answers with the schedule, so a view that thought the
+        // habit was ready corrects itself instead of sitting on a live button.
+        sendResponse(await completeReminder(message.id))
         return
       }
       case 'SNOOZE_REMINDER': {
-        await snoozeReminder(message.id, message.minutes)
-        sendResponse({ ok: true, schedule: await readSchedule() })
+        sendResponse({ ok: true, schedule: await snoozeReminder(message.id, message.minutes) })
         return
       }
       case 'PREVIEW_NOTIFICATION': {

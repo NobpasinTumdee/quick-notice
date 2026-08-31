@@ -19,7 +19,8 @@ interface MascotProps {
 /**
  * Momo — a mochi sprout, drawn as stacked layers so wearables compose cleanly:
  *
- *   shadow → outfit.back → headwear.back → sprout → arms → BODY → face
+ *   shadow → outfit.back → headwear.back → sprout → arms → BODY
+ *          → face (incl. expression-only art like the focus headband)
  *          → outfit.front → headwear.front → prop → mood FX
  *
  * Every layer shares the same 120×120 viewBox, so a part is authored once and
@@ -169,6 +170,9 @@ export function Mascot({
 
       {/* face */}
       <g>
+        {/* The focus headband belongs to the expression, not the wardrobe: it
+            arrives with the face and leaves with it, and costs no inventory. */}
+        {mood === 'focused' && <Headband color={palette.leaf} />}
         <Eyes closed={eyesClosed} mood={mood} color={palette.eye} />
         <ellipse cx="38" cy="76" rx="7" ry="4.6" fill={palette.cheek} opacity="0.7" />
         <ellipse cx="82" cy="76" rx="7" ry="4.6" fill={palette.cheek} opacity="0.7" />
@@ -209,6 +213,27 @@ export function Mascot({
           <Sparkle x={22} y={38} c={palette.leaf} />
           <Sparkle x={98} y={44} c={palette.cheek} />
           <Sparkle x={88} y={26} c={palette.leaf} />
+        </motion.g>
+      )}
+
+      {mood === 'dizzy' && (
+        <motion.g
+          animate={animated ? { rotate: 360 } : undefined}
+          transition={{ duration: 3.4, repeat: Infinity, ease: 'linear' }}
+          style={{ originX: '60px', originY: '30px' }}
+        >
+          <Sparkle x={44} y={26} c={palette.leaf} />
+          <Sparkle x={76} y={30} c={palette.cheek} />
+          <Sparkle x={60} y={20} c={palette.leaf} />
+        </motion.g>
+      )}
+
+      {mood === 'cool' && (
+        <motion.g
+          animate={animated ? { opacity: [0, 1, 0], x: [-6, 10, 22] } : undefined}
+          transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut', repeatDelay: 0.8 }}
+        >
+          <path d="M38 58l3 5-3 5-3-5z" fill="#ffffff" opacity="0.85" />
         </motion.g>
       )}
 
@@ -262,6 +287,44 @@ export function Mascot({
 function Eyes({ closed, mood, color }: { closed: boolean; mood: MascotMood; color: string }) {
   const stroke = { stroke: color, strokeWidth: 3.4, strokeLinecap: 'round' as const, fill: 'none' }
 
+  // Shades and swirls are drawn *over* the eyes, so they ignore blinking —
+  // sunglasses that blink would be a bug, not a feature.
+  if (mood === 'cool') {
+    return (
+      <g>
+        <path d="M32 60h56" stroke="#2a2f3a" strokeWidth="3" strokeLinecap="round" />
+        <path d="M33 60h22c1 6-2 10-8 10s-13-3-14-10z" fill="#2a2f3a" />
+        <path d="M87 60H65c-1 6 2 10 8 10s13-3 14-10z" fill="#2a2f3a" />
+        <path d="M55 61h10" stroke="#2a2f3a" strokeWidth="2.6" />
+        <path d="M37 63l7 2-7 3z" fill="#ffffff" opacity="0.5" />
+        <path d="M70 63l7 2-7 3z" fill="#ffffff" opacity="0.35" />
+      </g>
+    )
+  }
+  if (mood === 'dizzy') {
+    // Two open spirals: enough turns to read as a swirl at 72px, no more.
+    const swirl = (cx: number) => (
+      <path
+        d={`M${cx} 65a3 3 0 103 3 5 5 0 10-5-5 7 7 0 107 7`}
+        {...stroke}
+        strokeWidth={2.6}
+        key={cx}
+      />
+    )
+    return <g>{[swirl(42), swirl(78)]}</g>
+  }
+  if (mood === 'focused') {
+    // Narrowed eyes under angled brows: determination, not anger.
+    return (
+      <g>
+        <path d="M35 58l13 4M85 58l-13 4" {...stroke} strokeWidth={3} />
+        <ellipse cx="42" cy="67" rx="4.4" ry="3.4" fill={color} />
+        <ellipse cx="78" cy="67" rx="4.4" ry="3.4" fill={color} />
+        <circle cx="43.6" cy="66" r="1.5" fill="#fff" opacity="0.9" />
+        <circle cx="79.6" cy="66" r="1.5" fill="#fff" opacity="0.9" />
+      </g>
+    )
+  }
   if (closed || mood === 'happy') {
     return (
       <g {...stroke}>
@@ -316,9 +379,26 @@ function Mouth({ mood, color }: { mood: MascotMood; color: string }) {
       )
     case 'stretching':
       return <path d="M55 75c2 6 8 6 10 0" fill={color} opacity="0.85" />
+    case 'cool':
+      return <path d="M54 77c4 3 9 2 12-2" {...stroke} />
+    case 'focused':
+      return <path d="M55 77h10" {...stroke} strokeWidth={3.2} />
+    case 'dizzy':
+      return <path d="M52 78c2-2.4 4 2.4 6 0s4 2.4 6 0 4 2.4 4 0" {...stroke} strokeWidth={2.4} />
     default:
       return <path d="M55 76c2 3 8 3 10 0" {...stroke} />
   }
+}
+
+/** Tied across the forehead, knot on the left, tails trailing. */
+function Headband({ color }: { color: string }) {
+  return (
+    <g>
+      <path d="M30 55c8-6 52-6 60 0l-1 6c-10-5-48-5-58 0z" fill={color} />
+      <path d="M32 56c9-4 47-4 56 0" stroke="#ffffff" strokeWidth="1.4" opacity="0.35" fill="none" />
+      <path d="M30 55l-8 4 6 3 3-3zM30 61l-9 6 7 2 3-4z" fill={color} opacity="0.9" />
+    </g>
+  )
 }
 
 function Sparkle({ x, y, c }: { x: number; y: number; c: string }) {

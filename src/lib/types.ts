@@ -1,8 +1,21 @@
 export type ReminderId = 'hydration' | 'posture' | 'eyes' | 'stretch'
 
-export type ThemeId = 'matcha' | 'sakura' | 'ocean' | 'midnight' | 'sunset'
+export type ThemeId =
+  | 'matcha'
+  | 'sakura'
+  | 'ocean'
+  | 'midnight'
+  | 'sunset'
+  | 'cafe'
+  | 'lofi'
+  | 'nebula'
+  | 'mecha'
+  | 'cyber'
 
-/** Drives which face the mascot wears. */
+/**
+ * Drives which face the mascot wears. Expressions are state, never inventory:
+ * nothing here is bought, owned or written to storage.
+ */
 export type MascotMood =
   | 'idle'
   | 'happy'
@@ -11,6 +24,9 @@ export type MascotMood =
   | 'thirsty'
   | 'stretching'
   | 'wink'
+  | 'focused'
+  | 'cool'
+  | 'dizzy'
 
 export interface ReminderSetting {
   enabled: boolean
@@ -40,7 +56,16 @@ export interface Stats {
   lastStreakDay: string | null
 }
 
-/** Epoch-ms of the next scheduled nudge per reminder (null when off). */
+/**
+ * Epoch-ms at which each habit next comes due — the moment its nudge fires and
+ * its "Done" button unlocks. `null` means the reminder is switched off.
+ *
+ * This is the cooldown ledger, persisted under `kw:due` in local storage, and
+ * the worker is the only writer. It is deliberately *not* derived from
+ * `chrome.alarms` at read time: a periodic alarm rolls forward on its own, so an
+ * ignored nudge would keep moving the goalposts, while a habit that came due an
+ * hour ago must stay claimable until it is actually claimed.
+ */
 export type Schedule = Partial<Record<ReminderId, number | null>>
 
 /** Wardrobe slots, in the order they appear in `PlayerState['eq']`. */

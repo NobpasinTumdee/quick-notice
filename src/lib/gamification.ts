@@ -17,10 +17,20 @@
  * would be smaller still, but the array survives the catalogue outgrowing 31 items
  * without a migration, which is the cheaper long-term trade.
  */
+import {
+  ITEM_MAP,
+  ITEMS,
+  SLOT_INDEX,
+  SLOTS,
+  SOUND_MAP,
+  SOUNDS,
+  THEME_UNLOCK_LEVEL,
+  type Item,
+  type SoundMeta,
+} from './inventory'
 import { THEMES } from './themes'
-import type { PlayerState, Rarity, Slot, ThemeId } from './types'
+import type { PlayerState, Slot, ThemeId } from './types'
 
-export const SLOTS: readonly Slot[] = ['head', 'outfit', 'prop'] as const
 export const MAX_LEVEL = 50
 export const PLAYER_KEY = 'kw:p'
 
@@ -79,102 +89,78 @@ export function completionReward(streakDays: number): CompletionReward {
   }
 }
 
-/* ------------------------------------------------------------- catalogue */
+/* --------------------------------------------------------------- cooldown */
 
-export interface Item {
-  id: number
-  slot: Slot
-  name: string
-  rarity: Rarity
-  /** Level that puts the item on the shop shelf. */
-  level: number
-  /** Coin price once unlocked. */
-  price: number
-  /** Key into the SVG part registry — the art itself never touches storage. */
-  part: string
-  /** One-liner shown on the shop card. */
-  blurb: string
+/**
+ * Slack allowed when comparing "now" against a due timestamp.
+ *
+ * The panel's clock and the worker's clock are the same clock, but a click is
+ * dispatched a few frames after the countdown paints "ready". Without a small
+ * grace the user could tap a button the UI has already enabled and be told to
+ * wait — the guard exists to stop farming, not to punish a fast finger.
+ */
+export const CLAIM_GRACE_MS = 1_500
+
+export type ClaimDenial = 'paused' | 'cooldown'
+
+export type ClaimCheck =
+  | { ok: true }
+  | {
+      ok: false
+      reason: ClaimDenial
+      /** ms until the habit unlocks; 0 when it is simply switched off. */
+      waitMs: number
+    }
+
+/**
+ * Decides whether a habit may be claimed for EXP right now.
+ *
+ * This is the whole anti-farm rule, and it is deliberately a pure function of
+ * (enabled, dueAt, now): the UI calls it to grey the button out, and the service
+ * worker calls it again before minting anything. The UI copy is a courtesy — the
+ * worker's call is the one that counts, because a crafted `COMPLETE_REMINDER`
+ * message from a console can skip the button entirely.
+ */
+export function checkClaim(
+  enabled: boolean,
+  dueAt: number | null | undefined,
+  now: number,
+): ClaimCheck {
+  if (!enabled) return { ok: false, reason: 'paused', waitMs: 0 }
+  // No timestamp yet (fresh install, repaired save): treat it as still counting
+  // down rather than as free EXP.
+  if (typeof dueAt !== 'number' || !Number.isFinite(dueAt)) {
+    return { ok: false, reason: 'cooldown', waitMs: 0 }
+  }
+  const waitMs = dueAt - now
+  if (waitMs > CLAIM_GRACE_MS) return { ok: false, reason: 'cooldown', waitMs }
+  return { ok: true }
 }
 
-export const RARITY_META: Record<Rarity, { label: string; color: string; ring: string }> = {
-  1: { label: 'Common', color: '#94a3b8', ring: 'rgb(148 163 184 / 0.45)' },
-  2: { label: 'Rare', color: '#38bdf8', ring: 'rgb(56 189 248 / 0.45)' },
-  3: { label: 'Epic', color: '#a78bfa', ring: 'rgb(167 139 250 / 0.5)' },
-  4: { label: 'Legendary', color: '#fbbf24', ring: 'rgb(251 191 36 / 0.55)' },
-}
+/* --------------------------------------------------------------- catalogue */
 
-export const ITEMS: Item[] = [
-  // ---- head (10s) -------------------------------------------------------
-  { id: 11, slot: 'head', name: 'Ribbon Bow', rarity: 1, level: 1, price: 40, part: 'bow', blurb: 'A tidy little bow.' },
-  { id: 12, slot: 'head', name: 'Straw Hat', rarity: 1, level: 3, price: 60, part: 'strawHat', blurb: 'For sunny window desks.' },
-  { id: 13, slot: 'head', name: 'Cosy Beanie', rarity: 2, level: 5, price: 110, part: 'beanie', blurb: 'Knitted by a friend.' },
-  { id: 14, slot: 'head', name: 'Flower Crown', rarity: 2, level: 7, price: 140, part: 'flowerCrown', blurb: 'Spring, worn on the head.' },
-  { id: 15, slot: 'head', name: 'Cat Ears', rarity: 3, level: 9, price: 200, part: 'catEars', blurb: 'Momo insists they are real.' },
-  { id: 16, slot: 'head', name: 'Wizard Hat', rarity: 3, level: 12, price: 260, part: 'wizardHat', blurb: 'Hydration is the true magic.' },
-  { id: 17, slot: 'head', name: 'Tiny Halo', rarity: 4, level: 16, price: 420, part: 'halo', blurb: 'Awarded for perfect posture.' },
+/**
+ * The catalogue itself lives in `inventory.ts` — items, sound packs and theme
+ * unlock levels. It is re-exported here so callers keep importing "the game"
+ * from one place, while this module stays about *rules* and the save format.
+ */
+export {
+  ITEM_MAP,
+  ITEMS,
+  itemsForSlot,
+  RARITY_META,
+  SLOT_INDEX,
+  SLOT_META,
+  SLOTS,
+  SOUND_MAP,
+  SOUNDS,
+  SYSTEM_SOUND_KEYS,
+  THEME_UNLOCK_LEVEL,
+  type Item,
+  type SoundMeta,
+} from './inventory'
 
-  // ---- outfit (20s) -----------------------------------------------------
-  { id: 21, slot: 'outfit', name: 'Wool Scarf', rarity: 1, level: 2, price: 50, part: 'scarf', blurb: 'Warm and a bit dramatic.' },
-  { id: 22, slot: 'outfit', name: 'Barista Apron', rarity: 1, level: 4, price: 80, part: 'apron', blurb: 'Matcha, obviously.' },
-  { id: 23, slot: 'outfit', name: 'Comfy Hoodie', rarity: 2, level: 6, price: 130, part: 'hoodie', blurb: 'Deploy-day uniform.' },
-  { id: 24, slot: 'outfit', name: 'Sailor Collar', rarity: 2, level: 8, price: 170, part: 'sailor', blurb: 'Ready to set sail.' },
-  { id: 25, slot: 'outfit', name: 'Star Cape', rarity: 3, level: 11, price: 240, part: 'cape', blurb: 'Swooshes when you stretch.' },
-  { id: 26, slot: 'outfit', name: 'Frog Onesie', rarity: 4, level: 14, price: 380, part: 'onesie', blurb: 'Ribbit. Deeply comfortable.' },
-
-  // ---- prop (40s) -------------------------------------------------------
-  { id: 41, slot: 'prop', name: 'Water Bottle', rarity: 1, level: 2, price: 45, part: 'bottle', blurb: 'Never empty for long.' },
-  { id: 42, slot: 'prop', name: 'Matcha Cup', rarity: 1, level: 5, price: 70, part: 'teaCup', blurb: 'Steam included.' },
-  { id: 43, slot: 'prop', name: 'Mini Dumbbell', rarity: 2, level: 7, price: 120, part: 'dumbbell', blurb: 'Two whole kilograms.' },
-  { id: 44, slot: 'prop', name: 'Pocket Book', rarity: 2, level: 10, price: 180, part: 'book', blurb: 'Look away from the screen.' },
-  { id: 45, slot: 'prop', name: 'Star Wand', rarity: 3, level: 13, price: 300, part: 'wand', blurb: 'Casts *remember to blink*.' },
-  { id: 46, slot: 'prop', name: 'Rubber Duck', rarity: 4, level: 18, price: 460, part: 'duck', blurb: 'Debugs your posture.' },
-]
-
-export const ITEM_MAP: ReadonlyMap<number, Item> = new Map(ITEMS.map((i) => [i.id, i]))
-
-export function itemsForSlot(slot: Slot): Item[] {
-  return ITEMS.filter((i) => i.slot === slot)
-}
-
-export const SLOT_INDEX: Record<Slot, 0 | 1 | 2> = { head: 0, outfit: 1, prop: 2 }
-
-export const SLOT_META: Record<Slot, { label: string; emoji: string }> = {
-  head: { label: 'Head', emoji: '🎀' },
-  outfit: { label: 'Outfit', emoji: '🧣' },
-  prop: { label: 'Prop', emoji: '✨' },
-}
-
-/* ----------------------------------------------------------- sound packs */
-
-export interface SoundMeta {
-  id: number
-  name: string
-  level: number
-  /** Key into the generated base64 audio table. */
-  key: string
-}
-
-export const SOUNDS: SoundMeta[] = [
-  { id: 0, name: 'Soft Ping', level: 1, key: 'ping' },
-  { id: 1, name: 'Cute Pop', level: 1, key: 'pop' },
-  { id: 2, name: '8-bit Blip', level: 3, key: 'blip' },
-  { id: 3, name: 'Wind Chime', level: 6, key: 'chime' },
-  { id: 4, name: 'Bubble', level: 9, key: 'bubble' },
-  { id: 5, name: 'Silent', level: 1, key: 'silent' },
-]
-
-export const SOUND_MAP: ReadonlyMap<number, SoundMeta> = new Map(SOUNDS.map((s) => [s.id, s]))
-
-/* ---------------------------------------------------------------- themes */
-
-/** Level at which each theme unlocks, indexed like `THEMES`. */
-export const THEME_UNLOCK_LEVEL: Record<ThemeId, number> = {
-  matcha: 1,
-  sakura: 2,
-  ocean: 4,
-  midnight: 6,
-  sunset: 9,
-}
+/* ------------------------------------------------------------------ themes */
 
 export const themeBit = (index: number) => 1 << index
 
