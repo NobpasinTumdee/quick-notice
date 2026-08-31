@@ -1,0 +1,87 @@
+/**
+ * The toast's stylesheet. Compiled by Tailwind, imported with `?inline` by
+ * `mount.tsx`, and injected into the shadow root — never into the page.
+ *
+ * Two shadow-DOM specifics to know:
+ *
+ * 1. Theme variables go on `:host`, not `:root`. `:root` is the *document*
+ *    element, which a shadow tree cannot see, so the popup's `:root { --kw-* }`
+ *    block would resolve to nothing in here. `:host` styles the host element,
+ *    and the variables inherit down into the whole shadow tree.
+ * 2. Tailwind's Preflight is safe here for the same reason it is dangerous in a
+ *    page's <head>: its resets stop at the shadow boundary.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :host {
+    /* Matcha, as a fallback. `mount.tsx` overwrites these per the user's theme
+       before the first paint, so this only shows if that ever failed. */
+    --kw-bg-start: 242 248 236;
+    --kw-bg-end: 211 235 208;
+    --kw-surface: 255 255 255;
+    --kw-surface-strong: 255 255 255;
+    --kw-glass: 0.55;
+    --kw-glass-soft: 0.34;
+    --kw-edge: 255 255 255;
+    --kw-ink: 36 66 44;
+    --kw-ink-soft: 74 107 82;
+    --kw-ink-faint: 125 151 127;
+    --kw-accent: 87 160 90;
+    --kw-accent-soft: 215 236 210;
+    --kw-accent-deep: 47 107 58;
+    --kw-blush: 247 183 192;
+    --kw-shadow: 47 107 58;
+
+    /* The page owns the layout; we are a floating layer on top of it. */
+    all: initial;
+    display: block;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Preflight sets these on `html`, which does not exist inside a shadow root. */
+  :host > div {
+    font-family:
+      'Baloo 2', 'Quicksand', ui-rounded, 'SF Pro Rounded', 'Segoe UI Variable Display', system-ui,
+      sans-serif;
+    line-height: 1.4;
+    color: rgb(var(--kw-ink));
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  /* The card. Kept as a class rather than utilities so the drag transform and
+     the blur are in one place, where a slow page can be reasoned about. */
+  .kw-toast {
+    pointer-events: auto;
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    /* Set per theme by mount.tsx; the fallback keeps it readable regardless. */
+    background: rgb(var(--kw-toast-surface, var(--kw-surface)) / var(--kw-toast-alpha, 0.9));
+    box-shadow:
+      0 16px 40px -12px rgb(var(--kw-shadow) / 0.45),
+      inset 0 1px 0 0 rgb(var(--kw-edge) / 0.45);
+    /* Some pages set `cursor: none` or a custom cursor on everything. */
+    cursor: grab;
+  }
+  .kw-toast:active {
+    cursor: grabbing;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

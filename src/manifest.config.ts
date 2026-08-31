@@ -33,6 +33,22 @@ export default defineManifest({
     service_worker: 'src/background/service-worker.ts',
     type: 'module',
   },
+  /**
+   * The in-page toast. This is the one part of the extension that touches pages
+   * the user browses, so it is kept deliberately thin: the entry point below
+   * only registers a message listener, and React, Framer Motion and the widget
+   * itself are dynamically imported the first time a nudge actually fires.
+   *
+   * `all_frames` stays off — one toast per page, never one per ad iframe.
+   */
+  content_scripts: [
+    {
+      matches: ['<all_urls>'],
+      js: ['src/content/index.ts'],
+      run_at: 'document_idle',
+      all_frames: false,
+    },
+  ],
   permissions: ['storage', 'alarms', 'notifications', 'offscreen', 'sidePanel'],
   web_accessible_resources: [
     {

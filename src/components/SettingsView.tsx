@@ -1,10 +1,11 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { useState } from 'react'
-import { formatHour } from '../lib/format'
-import { REMINDERS } from '../lib/reminders'
+import { formatHour, formatMinutes } from '../lib/format'
+import { INTERVAL_MAX, INTERVAL_MIN, REMINDERS } from '../lib/reminders'
+import { TOAST_DURATION_MAX } from '../lib/storage'
 import type { PlayerState, ReminderId, Settings, Stats, ThemeId } from '../lib/types'
 import { GlassCard } from './GlassCard'
-import { IntervalSlider } from './IntervalSlider'
+import { NumberSlider } from './NumberSlider'
 import { ThemePicker } from './ThemePicker'
 import { Toggle } from './Toggle'
 import { ViewModePicker } from './ViewModePicker'
@@ -19,6 +20,9 @@ interface SettingsViewProps {
   onPatch: (patch: Partial<Settings>) => void
   onPreview: (id: ReminderId) => void
 }
+
+/** Landmarks on the interval track; the slider itself never snaps to them. */
+const INTERVAL_TICKS = [15, 30, 60, 90, 120, 150]
 
 export function SettingsView({
   settings,
@@ -94,10 +98,16 @@ export function SettingsView({
                       className="overflow-hidden"
                     >
                       <div className="pt-2.5">
-                        <IntervalSlider
-                          label={meta.label}
+                        <NumberSlider
+                          label={`${meta.label} interval`}
                           value={conf.intervalMinutes}
                           onChange={(minutes) => onSetInterval(meta.id, minutes)}
+                          min={INTERVAL_MIN}
+                          max={INTERVAL_MAX}
+                          unit="min"
+                          ticks={INTERVAL_TICKS}
+                          // Past the hour, "90" alone stops being readable.
+                          hint={(value) => (value >= 60 ? formatMinutes(value) : null)}
                           accent={meta.tint.to}
                         />
                       </div>
@@ -143,6 +153,43 @@ export function SettingsView({
               />
             }
           />
+          <div className="h-px bg-ink/10" />
+          <Row
+            title="In-page toast"
+            subtitle="A card on the page you are reading, with Done and Snooze"
+            control={
+              <Toggle
+                checked={settings.enableInPageToast}
+                onChange={(next) => onPatch({ enableInPageToast: next })}
+                label="Toggle in-page notifications"
+                size="sm"
+              />
+            }
+          />
+          <AnimatePresence initial={false}>
+            {settings.enableInPageToast && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="pt-1">
+                  <NumberSlider
+                    label="Toast duration in seconds"
+                    caption="Stays for"
+                    value={settings.toastDuration}
+                    onChange={(toastDuration) => onPatch({ toastDuration })}
+                    min={0}
+                    max={TOAST_DURATION_MAX}
+                    unit="s"
+                    ticks={[5, 10, 20, 30, 45]}
+                    minLabel="until dismissed"
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="h-px bg-ink/10" />
           <Row
             title="Quiet hours"

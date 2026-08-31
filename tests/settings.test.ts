@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { defaultSettings, isQuiet, mergeSettings, VIEW_MODES } from '../src/lib/storage.ts'
+import {
+  clampDuration,
+  defaultSettings,
+  isQuiet,
+  mergeSettings,
+  TOAST_DURATION_MAX,
+  VIEW_MODES,
+} from '../src/lib/storage.ts'
 
 test('a fresh profile opens in the side panel', () => {
   assert.equal(defaultSettings().viewMode, 'sidepanel')
@@ -46,4 +53,27 @@ test('quiet hours wrap around midnight', () => {
   assert.ok(isQuiet(s, at(3)))
   assert.ok(!isQuiet(s, at(12)))
   assert.ok(!isQuiet({ ...s, quietHours: { ...s.quietHours, enabled: false } }, at(23)))
+})
+
+test('the in-page toast is on by default, for ten seconds', () => {
+  assert.equal(defaultSettings().enableInPageToast, true)
+  assert.equal(defaultSettings().toastDuration, 10)
+})
+
+test('a toast duration is clamped, and zero is a legal value', () => {
+  // 0 is not "unset": it means the card waits to be dismissed.
+  assert.equal(clampDuration(0), 0)
+  assert.equal(clampDuration(-5), 0)
+  assert.equal(clampDuration(999), TOAST_DURATION_MAX)
+  assert.equal(clampDuration(7.6), 8)
+  assert.equal(clampDuration('abc'), 10, 'unreadable falls back to the default')
+  assert.equal(mergeSettings({ toastDuration: 1e9 }).toastDuration, TOAST_DURATION_MAX)
+})
+
+test('settings saved before the toast existed still load', () => {
+  const legacy = { theme: 'ocean', viewMode: 'popup', notificationsEnabled: true }
+  const merged = mergeSettings(legacy)
+  assert.equal(merged.enableInPageToast, true, 'missing field takes the default')
+  assert.equal(merged.toastDuration, 10)
+  assert.equal(merged.viewMode, 'popup', 'existing fields survive')
 })

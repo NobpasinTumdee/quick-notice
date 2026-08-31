@@ -46,6 +46,9 @@ settings at any time.
 - **Quiet hours** — Momo stays silent overnight (or whenever you say) without losing the cycle.
 - **Soft notifications** — silent, low priority, with **Done ✓** and **Snooze 5 min** buttons,
   illustrated with per-habit mascot art.
+- **In-page toast** — a glass card in the corner of the page you are already reading, with
+  Momo, the nudge, and the same two buttons. Swipe it away, or let it time itself out. It
+  lives in a shadow root and cannot touch the page's styling. See [In-page toast](#in-page-toast).
 - **Streaks** — a daily streak and per-habit counters, kept in `chrome.storage`.
 - **Your choice of surface** — side panel (stays open beside your tabs) or popup, picked in
   Settings → *Open as*. See [Surfaces](#surfaces-side-panel-or-popup).
@@ -100,10 +103,16 @@ src/
     ViewModePicker.tsx      side panel vs popup, with a diagram of each
     TabBar.tsx              Momo / Shop / Setup, with a spring-shared pill
     Toggle.tsx              spring pill switch
-    IntervalSlider.tsx      1-minute range input paired with a typed number field
+    NumberSlider.tsx        range input paired with a typed number box (intervals, duration)
     GlassCard.tsx           the frosted surface everything is built from
     Header.tsx              level ring, title, streak, purse
     SpeechBubble.tsx        tail-pointed bubble with a pop transition
+  content/
+    index.ts                content script: a listener and nothing else until a nudge lands
+    mount.tsx               shadow root, style injection, React root, teardown
+    ToastStack.tsx          queue, replacement and exit sequencing
+    ToastWidget.tsx         the card: drag to dismiss, countdown, Done / Snooze
+    toast.css               Tailwind for the shadow root only (`?inline`, never the page)
   hooks/useCompanion.ts     popup state: optimistic writes, debounced persistence
   lib/
     gamification.ts         the save format, level curve, cooldown guard, shop rules
@@ -257,6 +266,65 @@ A couple of them are more than beeps:
 Sounds are deterministic: the noise generator is seeded, so a rebuild produces byte-identical
 files.
 
+## In-page toast
+
+When a nudge fires, the worker also sends a `SHOW_TOAST` message to the active tab, and a
+glass card slides in at the bottom right of whatever page you are reading — Momo in your
+current outfit, the reminder, **Done ✓** and **Snooze**. Swipe it sideways to throw it away,
+or leave it: it counts itself out along the rail at the bottom.
+
+Off by nobody's default but yours: *Settings → Notifications → In-page toast*, with a duration
+slider from 1 to 60 seconds, or **0 for "stays until dismissed"**.
+
+### It cannot break the pages you visit
+
+This is the part worth being careful about. Injecting Tailwind into a host page's `<head>`
+would restyle every site you browse — Preflight alone resets margins, headings, lists and form
+controls. So the toast lives in a **shadow root**, and its stylesheet is imported with Vite's
+`?inline` and injected *into that root*:
+
+```ts
+import css from './toast.css?inline'      // a string, not a <style> in the page
+const shadow = host.attachShadow({ mode: 'open' })
+shadow.append(Object.assign(document.createElement('style'), { textContent: css }))
+```
+
+Two details that follow from being in a shadow tree: theme variables go on `:host` rather than
+`:root` (a shadow tree cannot see the document element), and the host element gets
+`all: initial` plus a few `!important`s so a page's own `div { position: static !important }`
+cannot relocate it.
+
+The test for this drives a deliberately hostile page — `* { font-family: Comic Sans !important }`,
+`div { position: static !important }`, a `content-box` reset — and compares nine computed
+styles before and after the toast mounts. Nothing moves, the page's head gains no stylesheet,
+and the card still renders in Baloo 2 at 320px with its blur intact.
+
+### Cost on pages you visit
+
+The content script that runs everywhere is **1.6 KB**. React, Framer Motion, the mascot art and
+the stylesheet are behind a dynamic `import()` that only runs the first time a nudge actually
+arrives, and the whole thing unmounts and removes its host element once the last card leaves.
+A browsing session with no reminders in it pays for a message listener and nothing more.
+
+### What it costs you in permissions
+
+`content_scripts` on `<all_urls>` is what makes Chrome say *"Read and change all your data on
+all websites"* at install. That is the honest price of drawing on arbitrary pages, and it is
+the only reason the extension asks for it — there is no host permission, no `tabs` permission,
+and no page reading of any kind. `chrome.tabs.query` is used for the active tab's **id** and
+nothing else, and `chrome.tabs.sendMessage` only ever talks to our own content script. If you
+would rather not grant that, turning the toast off leaves the desktop notification doing the
+same job.
+
+### Failure modes it expects
+
+- **A tab with no content script** — `chrome://` pages, the Web Store, PDFs, and every tab that
+  was already open when the extension was installed. `sendMessage` rejects; the toast is
+  skipped and the desktop notification still lands.
+- **A stale card** — the worker re-checks the cooldown when **Done ✓** is pressed, so a habit
+  already ticked off elsewhere is refused, and the card says so rather than silently failing.
+- **Quiet hours and muted notifications** silence the toast along with the banner.
+
 ## Progression
 
 | | |
@@ -308,9 +376,11 @@ build (or a corrupted one) can never equip art this build does not have.
 | `notifications` | the nudges themselves |
 | `offscreen` | playing the selected sound — MV3 workers have no `Audio`/`AudioContext` |
 | `sidePanel` | the UI itself |
+| `content_scripts` on `<all_urls>` | drawing the in-page toast; no host permissions, no page reading |
 
-No host permissions, no content scripts, no network calls: the extension never touches the
-pages you browse.
+No host permissions and no network calls. The only thing that reaches a page you browse is the
+toast, which draws into its own shadow root and reads nothing — see
+[In-page toast](#in-page-toast).
 
 ## Notes
 

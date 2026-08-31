@@ -9,6 +9,7 @@ import {
   buyItem,
   checkClaim,
   type ClaimDenial,
+  completionReward,
   equipItem,
   grantCompletion,
   ITEM_MAP,
@@ -21,6 +22,7 @@ import {
 import { clampInterval, REMINDER_IDS, REMINDER_MAP, pickOne } from '../lib/reminders'
 import {
   applyCompletion,
+  clampDuration,
   defaultSettings,
   dueAfter,
   isQuiet,
@@ -43,6 +45,7 @@ import type {
   Schedule,
   Settings,
   Stats,
+  ToastMessage,
   ViewMode,
 } from '../lib/types'
 
@@ -143,6 +146,41 @@ async function notify(id: ReminderId): Promise<void> {
   // through the offscreen document instead.
   const player = await loadPlayer()
   await playSoundFromWorker(player.s)
+}
+
+/**
+ * Sends the in-page toast to whatever tab the user is actually looking at.
+ *
+ * Only the active tab of the focused window gets one: a toast on all 40 open
+ * tabs is not a nudge, it is an infestation. The payload is self-contained —
+ * copy, EXP, theme and equipped items — so the content script never has to read
+ * storage or ask a follow-up question from inside someone else's page.
+ */
+async function showToast(id: ReminderId, settings: Settings): Promise<void> {
+  if (!settings.enableInPageToast) return
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab?.id === undefined) return
+
+    const meta = REMINDER_MAP[id]
+    const nudge = pickOne(meta.nudges)
+    const [stats, player] = await Promise.all([loadStats(), loadPlayer()])
+    const message: ToastMessage = {
+      type: 'SHOW_TOAST',
+      habit: id,
+      title: nudge.title,
+      body: nudge.body,
+      expReward: completionReward(stats.streakDays).exp,
+      durationMs: clampDuration(settings.toastDuration) * 1000,
+      theme: settings.theme,
+      equipped: player.eq,
+    }
+    await chrome.tabs.sendMessage(tab.id, message)
+  } catch (error) {
+    // Entirely expected: chrome:// pages, the Web Store, PDFs and any tab opened
+    // before the extension was installed have no content script listening.
+    console.debug('[kawaii] no toast target', error)
+  }
 }
 
 /* ------------------------------------------------------------ progression */
@@ -354,6 +392,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // Keep the daily counters honest even if the popup never opens.
   await saveStats(rollOverDay(await loadStats()))
 
+  // The two channels are independent on purpose: the toast is only ever seen if
+  // the user is looking at a normal web page, so the OS notification stays as
+  // the one that always lands.
+  await showToast(id, settings)
   await notify(id)
   const pending = await getPending()
   if (!pending.includes(id)) await setPending([...pending, id])
@@ -423,6 +465,8 @@ chrome.runtime.onMessage.addListener((message: PopupMessage, _sender, sendRespon
         return
       }
       case 'PREVIEW_NOTIFICATION': {
+        const settings = await loadSettings()
+        await showToast(message.id, settings)
         await notify(message.id)
         sendResponse({ ok: true })
         return

@@ -56,6 +56,11 @@ const sync = area()
 const local = area()
 const alarms = new Map<string, FakeAlarm>()
 const notifications: string[] = []
+/** Every message the worker pushed at a tab, newest last. */
+const toasts: { tabId: number; message: any }[] = []
+let activeTab: { id?: number } | null = { id: 42 }
+/** Set to make sendMessage reject, the way a chrome:// tab does. */
+let tabRejects = false
 const onMessage = event()
 const onAlarm = event()
 const onButtonClicked = event()
@@ -100,6 +105,13 @@ const chromeStub = {
     setBadgeText: async () => {},
     setPopup: async () => {},
     openPopup: async () => {},
+  },
+  tabs: {
+    query: async () => (activeTab ? [activeTab] : []),
+    sendMessage: async (tabId: number, message: unknown) => {
+      if (tabRejects) throw new Error('Could not establish connection.')
+      toasts.push({ tabId, message })
+    },
   },
   sidePanel: { setPanelBehavior: async () => {}, open: async () => {} },
   windows: { getLastFocused: async () => ({ id: 1 }), WINDOW_ID_NONE: -1 },
@@ -275,4 +287,87 @@ test('snoozing pushes the claim out with the nudge', async () => {
     false,
     'a snooze is not a shortcut to the reward',
   )
+})
+
+/* ------------------------------------------------------------ in-page toast */
+
+/** Puts settings in a known state and clears whatever earlier tests recorded. */
+const arm = async (patch: Partial<Settings>) => {
+  await send({ type: 'UPDATE_SETTINGS', settings: { ...settings(), ...patch } })
+  toasts.length = 0
+  notifications.length = 0
+  activeTab = { id: 42 }
+  tabRejects = false
+}
+
+test('a nudge sends a self-contained toast to the active tab', async () => {
+  await arm({ enableInPageToast: true, notificationsEnabled: true, toastDuration: 10 })
+  await onAlarm.emit({ name: 'kw:hydration', scheduledTime: Date.now() })
+
+  assert.equal(toasts.length, 1, 'exactly one tab is nudged')
+  assert.equal(toasts[0].tabId, 42, 'and it is the active one')
+
+  const { message } = toasts[0]
+  assert.equal(message.type, 'SHOW_TOAST')
+  assert.equal(message.habit, 'hydration')
+  assert.equal(message.durationMs, 10_000)
+  assert.ok(message.title.length > 0 && message.body.length > 0, 'copy travels with it')
+  assert.ok(message.expReward > 0, 'so does the reward it is worth')
+  assert.equal(message.theme, settings().theme)
+  assert.deepEqual(message.equipped, mergePlayer(sync.data[PLAYER_KEY]).eq)
+  // The content script must never need a second round trip into storage.
+  assert.deepEqual(
+    Object.keys(message).sort(),
+    ['body', 'durationMs', 'equipped', 'expReward', 'habit', 'theme', 'title', 'type'],
+  )
+})
+
+test('a duration of zero travels as "stays until dismissed"', async () => {
+  await arm({ enableInPageToast: true, toastDuration: 0 })
+  await onAlarm.emit({ name: 'kw:eyes', scheduledTime: Date.now() })
+  assert.equal(toasts.at(-1)?.message.durationMs, 0)
+})
+
+test('the toast toggle is honoured, and is independent of desktop notifications', async () => {
+  await arm({ enableInPageToast: false, notificationsEnabled: true })
+  await onAlarm.emit({ name: 'kw:hydration', scheduledTime: Date.now() })
+  assert.equal(toasts.length, 0, 'no toast')
+  assert.equal(notifications.length, 1, 'but the desktop notification still fires')
+
+  await arm({ enableInPageToast: true, notificationsEnabled: false })
+  await onAlarm.emit({ name: 'kw:hydration', scheduledTime: Date.now() })
+  assert.equal(toasts.length, 0, 'muting notifications mutes the toast with them')
+})
+
+test('quiet hours silence the toast as well as the banner', async () => {
+  const hour = new Date().getHours()
+  await arm({
+    enableInPageToast: true,
+    notificationsEnabled: true,
+    quietHours: { enabled: true, from: hour, to: (hour + 2) % 24 },
+  })
+  await onAlarm.emit({ name: 'kw:posture', scheduledTime: Date.now() })
+  assert.equal(toasts.length, 0)
+  assert.equal(notifications.length, 0)
+  await arm({ quietHours: { enabled: false, from: 22, to: 8 } })
+})
+
+test('a tab with no content script does not break the nudge', async () => {
+  // chrome://, the Web Store, a PDF, or any tab opened before install.
+  await arm({ enableInPageToast: true, notificationsEnabled: true })
+  tabRejects = true
+  await onAlarm.emit({ name: 'kw:hydration', scheduledTime: Date.now() })
+  assert.equal(notifications.length, 1, 'the desktop notification still lands')
+
+  await arm({ enableInPageToast: true, notificationsEnabled: true })
+  activeTab = null
+  await onAlarm.emit({ name: 'kw:hydration', scheduledTime: Date.now() })
+  assert.equal(toasts.length, 0, 'no window focused, nothing to toast at')
+  assert.equal(notifications.length, 1)
+})
+
+test('previewing a reminder also previews the toast', async () => {
+  await arm({ enableInPageToast: true, notificationsEnabled: true })
+  await send({ type: 'PREVIEW_NOTIFICATION', id: 'eyes' })
+  assert.equal(toasts.at(-1)?.message.habit, 'eyes')
 })

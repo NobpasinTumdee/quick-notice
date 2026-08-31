@@ -20,11 +20,16 @@ export function todayKey(d = new Date()): string {
 
 export const VIEW_MODES: readonly ViewMode[] = ['sidepanel', 'popup'] as const
 
+/** Seconds. 0 is legal and means "stay until dismissed". */
+export const TOAST_DURATION_MAX = 60
+
 export function defaultSettings(): Settings {
   return {
     theme: 'matcha',
     viewMode: 'sidepanel',
     notificationsEnabled: true,
+    enableInPageToast: true,
+    toastDuration: 10,
     quietHours: { enabled: false, from: 22, to: 8 },
     reminders: Object.fromEntries(
       REMINDERS.map((r) => [r.id, { enabled: true, intervalMinutes: r.defaultMinutes }]),
@@ -52,6 +57,9 @@ export function mergeSettings(stored: unknown): Settings {
     // An unknown mode would leave the action wired to nothing, so validate it.
     viewMode: VIEW_MODES.includes(s.viewMode as ViewMode) ? (s.viewMode as ViewMode) : base.viewMode,
     notificationsEnabled: s.notificationsEnabled ?? base.notificationsEnabled,
+    enableInPageToast: s.enableInPageToast ?? base.enableInPageToast,
+    // A NaN or negative duration would become a toast that never leaves.
+    toastDuration: clampDuration(s.toastDuration, base.toastDuration),
     quietHours: { ...base.quietHours, ...(s.quietHours ?? {}) },
     reminders: Object.fromEntries(
       REMINDERS.map((r) => {
@@ -122,6 +130,13 @@ export async function loadDue(settings: Settings, now = Date.now()): Promise<Sch
 
 export async function saveDue(due: Schedule): Promise<void> {
   await chrome.storage.local.set({ [DUE_KEY]: due })
+}
+
+/** Forces a toast duration into 0..60 whole seconds. */
+export function clampDuration(seconds: unknown, fallback = 10): number {
+  const n = Number(seconds)
+  if (Number.isNaN(n)) return fallback
+  return Math.min(TOAST_DURATION_MAX, Math.max(0, Math.round(n)))
 }
 
 export function mergeStats(stored: unknown): Stats {

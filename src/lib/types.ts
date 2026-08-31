@@ -42,6 +42,10 @@ export interface Settings {
   /** Surface the extension opens in; applied by the worker, not the manifest. */
   viewMode: ViewMode
   notificationsEnabled: boolean
+  /** Show the in-page toast on the active tab when a nudge fires. */
+  enableInPageToast: boolean
+  /** Seconds the toast stays up. 0 means it waits to be dismissed. */
+  toastDuration: number
   /** Skips nudges outside the active window (24h clock, local time). */
   quietHours: { enabled: boolean; from: number; to: number }
   reminders: Record<ReminderId, ReminderSetting>
@@ -101,6 +105,26 @@ export interface CompanionState {
   stats: Stats
   schedule: Schedule
   player: PlayerState
+}
+
+/**
+ * Worker -> content script. This is the only message that crosses into a page
+ * the user is browsing, so it carries everything the toast needs to render
+ * itself: no follow-up round trip, and no reason for a content script to read
+ * storage on every page load.
+ */
+export interface ToastMessage {
+  type: 'SHOW_TOAST'
+  habit: ReminderId
+  title: string
+  body: string
+  /** EXP the habit is worth right now, streak bonus included. */
+  expReward: number
+  /** ms on screen; 0 keeps it up until dismissed. */
+  durationMs: number
+  theme: ThemeId
+  /** Equipped item ids, so Momo turns up in the outfit the user picked. */
+  equipped: PlayerState['eq']
 }
 
 export type PopupMessage =
